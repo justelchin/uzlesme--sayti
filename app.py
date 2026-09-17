@@ -85,8 +85,15 @@ if df_qaime is not None or df_odenis is not None:
             st.dataframe(df_odenis.head(3))
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("⚙️ Sütun Uyğunlaşdırması")
+    st.sidebar.subheader("⚙️ Sütun və Məntiq Tənzimlənməsi")
     
+    # Artıq Ödəniş / Qalıq Məntiqi seçimi
+    qaliq_rejimi = st.sidebar.radio(
+        "💡 Artıq Ödəniş (Avans) Qalığı Harada Göstərilsin?",
+        options=["Debet Tərəfdə (Bizim Alacağımız / Avans)", "Kredit Tərəfdə (Kreditor Borcu)"],
+        index=0
+    )
+
     cols_qaime = df_qaime.columns.tolist() if df_qaime is not None else []
     cols_odenis = df_odenis.columns.tolist() if df_odenis is not None else []
     
@@ -204,7 +211,7 @@ if df_qaime is not None or df_odenis is not None:
                             "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
                             "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
                             "Növ": "Mədaxil / Qaytarılma",
-                            "Sənəd №": snd[:40],
+                            "Sənəd №": mblg_daxil,
                             "Debet": mblg_daxil,
                             "Kredit": 0.0
                         })
@@ -222,12 +229,27 @@ if df_qaime is not None or df_odenis is not None:
             
             dovr_df = full_df[(full_df["Tarix"] >= bas_tarix_dt) & (full_df["Tarix"] <= bit_tarix_dt)]
             
+            # Helper funksiya - Qalıq yerləşdirilməsi
+            def format_qaliq(qaliq_val):
+                # Əgər 'Debet Tərəfdə (Bizim Alacağımız)' seçilibsə:
+                # Fərq müsbət olarsa Debet, mənfi olarsa (artıq ödəniş) yenə Debetdə (Bizim alacağımız kimi)
+                if "Debet Tərəfdə" in qaliq_rejimi:
+                    fark = abs(qaliq_val)
+                    return f"{fark:,.2f}", "-"
+                else:
+                    if qaliq_val >= 0:
+                        return f"{qaliq_val:,.2f}", "-"
+                    else:
+                        return "-", f"{abs(qaliq_val):,.2f}"
+
+            ilk_deb, ilk_kred = format_qaliq(ilkin_qaliq) if ilkin_qaliq != 0 else ("-", "-")
+
             # 1. İlkin Qalıq Sətri
             akt_rows = [{
                 "Tarix": "-",
                 "Əməliyyat / Sənəd №": "Dövrə qədər olan ilkin qalıq",
-                "Debet (Borc)": f"{ilkin_qaliq:,.2f}" if ilkin_qaliq > 0 else "-",
-                "Kredit (Alacaq)": f"{abs(ilkin_qaliq):,.2f}" if ilkin_qaliq < 0 else "-"
+                "Debet (Borc)": ilk_deb,
+                "Kredit (Alacaq)": ilk_kred
             }]
             
             # 2. Dövr Əməliyyatları Sətirləri
@@ -257,14 +279,25 @@ if df_qaime is not None or df_odenis is not None:
                 "Kredit (Alacaq)": f"{cem_kredit:,.2f}"
             })
             
-            # 4. YEKUN SON QALIQ SƏTRİ (Cəmlərdən aşağıda)
-            son_qaliq = ilkin_qaliq + dovr_debet - dovr_kredit
+            # 4. YEKUN SON QALIQ SƏTRİ
+            # Müştərinin xalis qalığı (Debet - Kredit)
+            xalis_fark = cem_debet - cem_kredit
+            
+            if "Debet Tərəfdə" in qaliq_rejimi:
+                # Ödəniş artıq olduqda (xalis_fark mənfi və ya ödəniş çox olduqda), 
+                # bu bizim alacağımız / avansımız olduğu üçün DEBET sütununa yazılır!
+                abs_fark = abs(xalis_fark)
+                son_deb = f"{abs_fark:,.2f}" if abs_fark > 0 else "-"
+                son_kred = "-"
+            else:
+                son_deb = f"{xalis_fark:,.2f}" if xalis_fark > 0 else "-"
+                son_kred = f"{abs(xalis_fark):,.2f}" if xalis_fark < 0 else "-"
             
             akt_rows.append({
                 "Tarix": "-",
                 "Əməliyyat / Sənəd №": "📌 DÖVRÜN SONUNA OLAN YEKUN QALIQ",
-                "Debet (Borc)": f"{son_qaliq:,.2f}" if son_qaliq > 0 else "-",
-                "Kredit (Alacaq)": f"{abs(son_qaliq):,.2f}" if son_qaliq < 0 else "-"
+                "Debet (Borc)": son_deb,
+                "Kredit (Alacaq)": son_kred
             })
                 
             res_df = pd.DataFrame(akt_rows)
