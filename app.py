@@ -22,7 +22,7 @@ def clean_number(val):
     if pd.isna(val):
         return 0.0
     val_str = str(val).upper().replace("AZN", "").replace(" ", "").strip()
-    if not val_str or val_str == "NONE" or val_str == "NAN":
+    if not val_str or val_str in ["NONE", "NAN"]:
         return 0.0
     val_str = val_str.replace(",", ".")
     try:
@@ -44,11 +44,11 @@ def load_clean_data(uploaded_file, is_qaime=False):
         for i, row in df_raw.iterrows():
             row_str = " ".join([str(val).strip().lower() for val in row.values if pd.notna(val)])
             if is_qaime:
-                if any(k in row_str for k in ["tarix", "qaimə", "məbləğ", "alıcı", "adı"]):
+                if ("tarix" in row_str or "çıxarış" in row_str) and ("məbləğ" in row_str or "yekun" in row_str or "adı" in row_str):
                     header_row = i
                     break
             else:
-                if any(k in row_str for k in ["bank", "çıxarış", "silinmə", "daxil olma", "kontragent", "azn"]):
+                if any(k in row_str for k in ["bank tərəfindən", "çıxarış", "silinmə", "daxil olma", "kontragent"]):
                     header_row = i
                     break
 
@@ -69,33 +69,26 @@ df_odenis = load_clean_data(odenis_file, is_qaime=False)
 if df_qaime is not None or df_odenis is not None:
     st.markdown("---")
     
-    # Sol Paneldə Sütun Təyinatı
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("⚙️ Məbləğ Sütunlarını Dəqiqləşdirin")
-    
     q_cols = df_qaime.columns.tolist() if df_qaime is not None else []
     o_cols = df_odenis.columns.tolist() if df_odenis is not None else []
-    
-    # Avtomatik default indeksləri tapmaq
-    q_mbl_idx = next((i for i, c in enumerate(q_cols) if any(x in c.lower() for x in ["yekun", "məbləğ", "cəmi"])), 0) if q_cols else 0
-    o_mbl_idx = next((i for i, c in enumerate(o_cols) if any(x in c.lower() for x in ["silinmə", "daxil", "məbləğ", "12240"])), 0) if o_cols else 0
-    
-    q_mebleg_col = st.sidebar.selectbox("Qaimə Məbləğ Sütunu", q_cols, index=q_mbl_idx) if q_cols else None
-    o_mebleg_col = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", o_cols, index=o_mbl_idx) if o_cols else None
 
-    # Avtomatik digər sütunlar
-    q_tarix_col = next((c for c in q_cols if "tarix" in c.lower()), q_cols[0] if q_cols else None)
-    q_musteri_col = next((c for c in q_cols if any(x in c.lower() for x in ["adı", "müştəri", "alıcı"])), q_cols[0] if q_cols else None)
-    q_sened_col = next((c for c in q_cols if any(x in c.lower() for x in ["nömrə", "№", "sənəd"])), q_cols[0] if q_cols else None)
+    # Qaimə üçün sütunların dəqiq tespiti
+    q_tarix_col = next((c for c in q_cols if any(x in c.lower() for x in ["qaimə tarixi", "tarix"])), q_cols[0] if q_cols else None)
+    q_musteri_col = next((c for c in q_cols if c.lower() in ["adı", "müştəri", "alıcı", "satıcı"] or "kontragent" in c.lower()), q_cols[0] if q_cols else None)
+    q_mebleg_col = next((c for c in q_cols if any(x in c.lower() for x in ["yekun məbləğ", "məbləğ", "cəmi", "tutar"])), q_cols[-1] if q_cols else None)
+    q_sened_col = next((c for c in q_cols if any(x in c.lower() for x in ["qaimə nömrəsi", "nömrə", "№"])), q_cols[0] if q_cols else None)
 
-    o_tarix_col = next((c for c in o_cols if "tarix" in c.lower() or "keçirilib" in c.lower()), o_cols[0] if o_cols else None)
-    o_musteri_col = next((c for c in o_cols if any(x in c.lower() for x in ["kontragent", "müştəri", "ödəyən"])), o_cols[0] if o_cols else None)
+    # Ödəniş üçün sütunların tespiti
+    o_tarix_col = next((c for c in o_cols if any(x in c.lower() for x in ["bank tərəfindən", "tarix"])), o_cols[0] if o_cols else None)
+    o_musteri_col = next((c for c in o_cols if "kontragent" in c.lower() or "ödəyən" in c.lower()), o_cols[0] if o_cols else None)
+    o_mebleg_col = next((c for c in o_cols if any(x in c.lower() for x in ["silinmə", "daxil olma", "məbləğ"])), o_cols[-1] if o_cols else None)
     o_sened_col = next((c for c in o_cols if any(x in c.lower() for x in ["təyinat", "açıqlama"])), o_cols[0] if o_cols else None)
 
+    # Düzgün Müştəri Siyahısı
     musteriler_list = []
     if df_qaime is not None and q_musteri_col:
         raw_m = df_qaime[q_musteri_col].dropna().astype(str).unique().tolist()
-        musteriler_list = sorted([m for m in raw_m if m.strip() and not m.startswith("Unnamed") and m.lower() not in ["none", "nan"]])
+        musteriler_list = sorted([m for m in raw_m if m.strip() and not m.isdigit() and not m.startswith("Unnamed") and m.lower() not in ["none", "nan", "adı"]])
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -109,7 +102,7 @@ if df_qaime is not None or df_odenis is not None:
         combined_rows = []
         target_norm = normalize_text(secilmis_musteri)
         
-        # 1. Qaimələr (Debet)
+        # 1. Qaimələr / Alışlar (Debet)
         if df_qaime is not None and q_musteri_col:
             q_df = df_qaime[df_qaime[q_musteri_col].astype(str) == secilmis_musteri].copy()
             q_df[q_tarix_col] = pd.to_datetime(q_df[q_tarix_col], errors='coerce')
