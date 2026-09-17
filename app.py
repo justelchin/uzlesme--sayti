@@ -18,8 +18,14 @@ def normalize_text(text):
     if pd.isna(text):
         return ""
     text = str(text).upper()
-    for word in ['"', '”', '“', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ', 'MMC', 'LLC', 'OOO']:
-        text = text.replace(word, '')
+    # Azerbaycan hərf fərqliliklərini eyniləşdirmək
+    replacements = {
+        'İ': 'I', 'Ə': 'E', 'Ğ': 'G', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U',
+        '"': '', '”': '', '“': '', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ': '', 
+        'MMC': '', 'LLC': '', 'OOO': ''
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
     return re.sub(r'\s+', ' ', text).strip()
 
 def clean_number(val):
@@ -134,6 +140,9 @@ if df_qaime is not None or df_odenis is not None:
         combined_rows = []
         target_norm = normalize_text(secilmis_musteri)
         
+        # Açar sözləri çıxarmaq (Məsələn BARISTICA sözünü kök olaraq axtarmaq üçün)
+        keywords = [w for w in target_norm.split() if len(w) > 2]
+        
         # Qaimələr (Debet)
         if df_qaime is not None and musteri_q and tarix_q:
             q_df = df_qaime[df_qaime[musteri_q].astype(str) == secilmis_musteri].copy()
@@ -161,7 +170,14 @@ if df_qaime is not None or df_odenis is not None:
                 val_m = normalize_text(row[musteri_o])
                 val_s = normalize_text(row[sened_o]) if sened_o and sened_o in row else ""
                 
-                if (target_norm in val_m) or (target_norm in val_s) or (val_m in target_norm and len(val_m) > 3):
+                # Ağıllı Eyniləşdirmə: Tam ad, kök söz və ya açıqlama daxilində axtarış
+                is_match = False
+                if target_norm in val_m or target_norm in val_s:
+                    is_match = True
+                elif any(kw in val_m or kw in val_s for kw in keywords):
+                    is_match = True
+                
+                if is_match:
                     mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
                     snd = str(row[sened_o]) if sened_o and pd.notna(row[sened_o]) else "Ödəniş"
                     combined_rows.append({
