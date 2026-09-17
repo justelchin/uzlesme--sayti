@@ -20,8 +20,7 @@ def normalize_text(text):
     text = str(text).upper()
     for word in ['"', '”', '“', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ', 'MMC', 'LLC', 'OOO']:
         text = text.replace(word, '')
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    return re.sub(r'\s+', ' ', text).strip()
 
 def clean_number(val):
     if pd.isna(val):
@@ -108,13 +107,12 @@ if df_qaime is not None or df_odenis is not None:
     mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, key="mb_o") if cols_odenis else None
     sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, key="s_o") if cols_odenis else None
 
-    # Müştəri siyahısını filtrləmək (Rəqəmləri və lazımsız sözləri təmizləmək)
+    # Müştəri siyahısını filtrləmək
     musteriler_list = []
     if df_qaime is not None and musteri_q in df_qaime.columns:
         raw_m = df_qaime[musteri_q].dropna().astype(str).unique().tolist()
         for m in raw_m:
             m_clean = m.strip()
-            # Rəqəm (1.0 və s.) olmayan və real ad olan mətnləri seçirik
             if m_clean and not m_clean.replace('.', '').isdigit() and not m_clean.startswith("Unnamed") and m_clean.lower() not in ["none", "nan", "adı", "status", "vəen"]:
                 musteriler_list.append(m_clean)
         musteriler_list = sorted(list(set(musteriler_list)))
@@ -123,7 +121,6 @@ if df_qaime is not None or df_odenis is not None:
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # Axtarışla seçilə bilən müştəri qutusu
         secilmis_musteri = st.selectbox(
             "Müştərini Seçin (Adı yazaraq axtara bilərsiniz)", 
             options=musteriler_list if musteriler_list else ["Məlumat Tapılmadı"]
@@ -138,14 +135,14 @@ if df_qaime is not None or df_odenis is not None:
         target_norm = normalize_text(secilmis_musteri)
         
         # Qaimələr (Debet)
-        if df_qaime is not None and musteri_q:
+        if df_qaime is not None and musteri_q and tarix_q:
             q_df = df_qaime[df_qaime[musteri_q].astype(str) == secilmis_musteri].copy()
             q_df[tarix_q] = pd.to_datetime(q_df[tarix_q], errors='coerce')
             q_df = q_df.dropna(subset=[tarix_q])
             
             for _, row in q_df.iterrows():
                 mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
-                snd = str(row[sened_q]) if pd.notna(row[sened_q]) else ""
+                snd = str(row[sened_q]) if sened_q and pd.notna(row[sened_q]) else ""
                 combined_rows.append({
                     "Tarix": row[tarix_q],
                     "Növ": "Qaimə",
@@ -155,18 +152,18 @@ if df_qaime is not None or df_odenis is not None:
                 })
         
         # Ödənişlər (Kredit)
-        if df_odenis is not None and musteri_o:
+        if df_odenis is not None and musteri_o and tarix_o:
             o_df = df_odenis.copy()
             o_df[tarix_o] = pd.to_datetime(o_df[tarix_o], errors='coerce')
-            o_df = o_df.dropna(subset=[o_tarix_col] if 'o_tarix_col' in locals() else subset=[tarix_o])
+            o_df = o_df.dropna(subset=[tarix_o])
             
             for _, row in o_df.iterrows():
                 val_m = normalize_text(row[musteri_o])
-                val_s = normalize_text(row[sened_o]) if sened_o in row else ""
+                val_s = normalize_text(row[sened_o]) if sened_o and sened_o in row else ""
                 
                 if (target_norm in val_m) or (target_norm in val_s) or (val_m in target_norm and len(val_m) > 3):
                     mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
-                    snd = str(row[sened_o]) if pd.notna(row[sened_o]) else "Ödəniş"
+                    snd = str(row[sened_o]) if sened_o and pd.notna(row[sened_o]) else "Ödəniş"
                     combined_rows.append({
                         "Tarix": row[tarix_o],
                         "Növ": "Ödəniş",
