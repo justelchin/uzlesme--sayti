@@ -10,17 +10,15 @@ uploaded_file = st.sidebar.file_uploader("Excel / CSV Faylını Seçin", type=["
 
 if uploaded_file is not None:
     try:
-        # Excel fayllarında yuxarıdakı başlığı (header) avtomatik tapmaq
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
         else:
             df_raw = pd.read_excel(uploaded_file, header=None)
             
-        # Əsas cədvəl başlığının hansı sətrdə olduğunu tapırıq
         header_row = 0
         for i, row in df_raw.iterrows():
-            row_str = row.astype(str).str.lower().tolist()
-            if any("tarix" in item or "№" in item or "status" in item for item in row_str):
+            row_str = " ".join([str(val).lower() for val in row.values if pd.notna(val)])
+            if any(k in row_str for k in ["tarix", "№", "status", "qaimə", "məbləğ", "müştəri", "alınma"]):
                 header_row = i
                 break
                 
@@ -34,7 +32,7 @@ if uploaded_file is not None:
         st.subheader("📋 Yüklənmiş Məlumatların Önizləməsi")
         st.dataframe(df.head(5))
         
-        cols = df.columns.tolist()
+        cols = [str(c) for c in df.columns.tolist()]
         
         st.sidebar.markdown("---")
         st.sidebar.subheader("Sütun İnteqrasiyası")
@@ -59,7 +57,7 @@ if uploaded_file is not None:
             
         if st.button("🚀 Üzləşmə Aktını Generasiya Et"):
             df[tarix_col] = pd.to_datetime(df[tarix_col], errors='coerce')
-            df = df.dropna(subset=[tarix_col]) # Tarixi olmayan lazımsız sətrləri təmizləyirik
+            df = df.dropna(subset=[tarix_col])
             
             bas_tarix = pd.to_datetime(bas_tarix)
             bit_tarix = pd.to_datetime(bit_tarix)
@@ -68,8 +66,8 @@ if uploaded_file is not None:
             
             ilkin_df = m_df[m_df[tarix_col] < bas_tarix]
             
-            ilkin_debet = pd.to_numeric(ilkin_df[ilkin_df[nov_col].astype(str).str.contains("Qaimə|Debet", case=False, na=False)][mebleg_col], errors='coerce').sum()
-            ilkin_kredit = pd.to_numeric(ilkin_df[ilkin_df[nov_col].astype(str).str.contains("Ödəniş|Kredit", case=False, na=False)][mebleg_col], errors='coerce').sum()
+            ilkin_debet = pd.to_numeric(ilkin_df[ilkin_df[nov_col].astype(str).str.contains("Qaimə|Debet|Satış", case=False, na=False)][mebleg_col], errors='coerce').sum()
+            ilkin_kredit = pd.to_numeric(ilkin_df[ilkin_df[nov_col].astype(str).str.contains("Ödəniş|Kredit|Alış", case=False, na=False)][mebleg_col], errors='coerce').sum()
             ilkin_qaliq = ilkin_debet - ilkin_kredit
             
             dovr_df = m_df[(m_df[tarix_col] >= bas_tarix) & (m_df[tarix_col] <= bit_tarix)].copy()
@@ -84,14 +82,14 @@ if uploaded_file is not None:
             
             cari_qaliq = ilkin_qaliq
             for idx, row in dovr_df.iterrows():
-                nov = str(row[nov_col])
+                nov = str(row[nov_col]) if pd.notna(row[nov_col]) else ""
                 
                 try:
-                    mebleg = float(row[mebleg_col])
+                    mebleg = float(row[mebleg_col]) if pd.notna(row[mebleg_col]) else 0.0
                 except:
                     mebleg = 0.0
                     
-                sened = str(row[sened_col])
+                sened = str(row[sened_col]) if pd.notna(row[sened_col]) else ""
                 t_str = row[tarix_col].strftime("%d.%m.%Y")
                 
                 if any(k in nov.lower() for k in ["qaimə", "debet", "satış", "alış"]):
