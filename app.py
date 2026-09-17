@@ -222,7 +222,7 @@ if df_qaime is not None or df_odenis is not None:
             
             dovr_df = full_df[(full_df["Tarix"] >= bas_tarix_dt) & (full_df["Tarix"] <= bit_tarix_dt)]
             
-            # 1. İlkin Qalıq Sətri (Debitor -> Debet, Kreditor -> Kredit)
+            # 1. İlkin Qalıq Sətri
             akt_rows = [{
                 "Tarix": "-",
                 "Əməliyyat / Sənəd №": "Dövrə qədər olan ilkin qalıq",
@@ -230,7 +230,7 @@ if df_qaime is not None or df_odenis is not None:
                 "Kredit (Alacaq)": f"{abs(ilkin_qaliq):,.2f}" if ilkin_qaliq < 0 else "-"
             }]
             
-            # 2. Dövr Əməliyyatları
+            # 2. Dövr Əməliyyatları Sətirləri
             for _, row in dovr_df.iterrows():
                 debet = row["Debet"]
                 kredit = row["Kredit"]
@@ -243,9 +243,21 @@ if df_qaime is not None or df_odenis is not None:
                     "Kredit (Alacaq)": f"{kredit:,.2f}" if kredit > 0 else "-"
                 })
             
-            # 3. Yekun Son Qalıq Sətri (Debitor Borcu -> Debet, Kreditor Borcu -> Kredit)
+            # 3. DÖVRÜ DÖVRİYYƏ VƏ İLKİN QALIQ İLƏ CƏMİ SƏTRİ
             dovr_debet = dovr_df["Debet"].sum()
             dovr_kredit = dovr_df["Kredit"].sum()
+            
+            cem_debet = (ilkin_qaliq if ilkin_qaliq > 0 else 0.0) + dovr_debet
+            cem_kredit = (abs(ilkin_qaliq) if ilkin_qaliq < 0 else 0.0) + dovr_kredit
+            
+            akt_rows.append({
+                "Tarix": "-",
+                "Əməliyyat / Sənəd №": "📊 DÖVRİYYƏ VƏ İLKİN QALIQ CƏMİ",
+                "Debet (Borc)": f"{cem_debet:,.2f}",
+                "Kredit (Alacaq)": f"{cem_kredit:,.2f}"
+            })
+            
+            # 4. YEKUN SON QALIQ SƏTRİ (Cəmlərdən aşağıda)
             son_qaliq = ilkin_qaliq + dovr_debet - dovr_kredit
             
             akt_rows.append({
