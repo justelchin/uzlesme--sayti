@@ -20,29 +20,38 @@ def load_clean_data(uploaded_file, is_qaime=False):
         else:
             df_raw = pd.read_excel(uploaded_file, header=None)
             
-        header_row = 0
-        found = False
+        header_row = None
         
-        # Əgər Qaimə faylıdırsa, № və ya Status sözünü axtarırıq (e-qaimə strukturuna uyğun)
         for i, row in df_raw.iterrows():
             row_vals = [str(val).strip().lower() for val in row.values if pd.notna(val)]
+            row_str = " ".join(row_vals)
+            
             if is_qaime:
-                if any(k in row_vals for k in ["№", "status", "tarix", "vergi ödəyicisinin adı"]):
+                # Filtr sətrini keçmək üçün bir neçə sütun sözünü bir arada axtarırıq
+                if ("tarix" in row_str or "çıxarış" in row_str) and ("məbləğ" in row_str or "status" in row_str or "alıcı" in row_str or "satıcı" in row_str or "vəziyyət" in row_str):
                     header_row = i
-                    found = True
                     break
             else:
-                if any("tarix" in k or "bank" in k or "çıxarış" in k or "ödəniş" in k for k in row_vals):
+                if any(k in row_str for k in ["bank tərəfindən", "çıxarış", "silinmə", "daxil olma", "tarix"]):
                     header_row = i
-                    found = True
                     break
                     
+        if header_row is None:
+            # Əgər şərt tapılmazsa, "Nəşr tarixi" və ya "Tarix" sözü olan ilk sətri götürək
+            for i, row in df_raw.iterrows():
+                row_str = " ".join([str(val).strip().lower() for val in row.values if pd.notna(val)])
+                if "tarix" in row_str or "məbləğ" in row_str:
+                    header_row = i
+                    break
+                    
+        if header_row is None:
+            header_row = 0
+
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, skiprows=header_row if found else 0)
+            df = pd.read_csv(uploaded_file, skiprows=header_row)
         else:
-            df = pd.read_excel(uploaded_file, skiprows=header_row if found else 0)
+            df = pd.read_excel(uploaded_file, skiprows=header_row)
             
-        # Sütun adlarını təmizləmək
         df.columns = [str(c).strip() for c in df.columns]
         return df
     except Exception as e:
@@ -59,11 +68,11 @@ if df_qaime is not None or df_odenis is not None:
     with col_p1:
         if df_qaime is not None:
             st.subheader("📋 Qaimələr Faylı (Önizləmə)")
-            st.dataframe(df_qaime.head(3))
+            st.dataframe(df_qaime.head(5))
     with col_p2:
         if df_odenis is not None:
             st.subheader("📋 Ödənişlər Faylı (Önizləmə)")
-            st.dataframe(df_odenis.head(3))
+            st.dataframe(df_odenis.head(5))
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚙️ Sütun Uyğunlaşdırması")
@@ -90,7 +99,7 @@ if df_qaime is not None or df_odenis is not None:
     if df_odenis is not None and musteri_o in df_odenis.columns:
         musteriler.update(df_odenis[musteri_o].dropna().astype(str).unique())
         
-    musteriler_list = sorted([m for m in musteriler if m.strip() and not m.startswith("Unnamed") and m.lower() != "none"])
+    musteriler_list = sorted([m for m in musteriler if m.strip() and not m.startswith("Unnamed") and m.lower() not in ["none", "nan", "status", "vəen"]])
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
