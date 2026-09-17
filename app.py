@@ -17,8 +17,9 @@ def normalize_text(text):
     if pd.isna(text):
         return ""
     text = str(text).upper()
+    # Hər iki fayldakı İ/I və C/K fərqlərini tam bərabərləşdiririk
     replacements = {
-        'İ': 'I', 'Ə': 'E', 'Ğ': 'G', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U', 'K': 'C',
+        'İ': 'I', 'Ə': 'E', 'Ğ': 'G', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U',
         '"': '', '”': '', '“': '', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ': '', 
         'MMC': '', 'LLC': '', 'OOO': ''
     }
@@ -26,11 +27,10 @@ def normalize_text(text):
         text = text.replace(k, v)
     return re.sub(r'\s+', ' ', text).strip()
 
-def get_clean_company_name(text):
-    """Müştəri adından dırnaq, MMC və gərəksiz sözləri silib təmiz kök adı qaytarır"""
+def get_core_name(text):
     norm = normalize_text(text)
     words = [w for w in norm.split() if len(w) >= 3 and w not in ['MƏHDUD', 'MƏSULİYYƏTLİ', 'CƏMİYYƏTİ', 'MMC', 'LLC']]
-    return " ".join(words) if words else norm
+    return words[0] if words else norm
 
 def clean_number(val):
     if pd.isna(val):
@@ -54,7 +54,6 @@ def load_clean_data(uploaded_file, is_qaime=False):
         else:
             df = pd.read_excel(uploaded_file)
             
-        # Əgər ilk sətirlər boşdursa və ya Unnameddirsə, ilk tam sətri header edirik
         if any("Unnamed" in str(col) for col in df.columns[:2]):
             for i in range(min(10, len(df))):
                 row_vals = [str(v).lower() for v in df.iloc[i].values if pd.notna(v)]
@@ -130,18 +129,15 @@ if df_qaime is not None or df_odenis is not None:
     if st.button("🚀 Avtomatik Üzləşmə Aktı Yarat"):
         combined_rows = []
         target_raw = str(secilmis_musteri).strip()
-        target_clean = get_clean_company_name(secilmis_musteri)
+        target_core = get_core_name(secilmis_musteri)
         
         # 1. Qaimələr (Debet)
         if df_qaime is not None and musteri_q and tarix_q:
             for _, row in df_qaime.iterrows():
                 val_raw = str(row[musteri_q]).strip()
-                val_clean = get_clean_company_name(row[musteri_q])
+                val_core = get_core_name(row[musteri_q])
                 
-                # Qaimədə genişlənmiş uyğunlaşdırma
-                is_match = (val_raw == target_raw) or (target_clean in val_clean) or (val_clean in target_clean)
-                
-                if is_match:
+                if (val_raw == target_raw) or (target_core == val_core):
                     mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
                     snd = str(row[sened_q]).strip() if sened_q and pd.notna(row[sened_q]) else ""
                     raw_date = row[tarix_q]
@@ -159,15 +155,11 @@ if df_qaime is not None or df_odenis is not None:
         # 2. Ödənişlər (Kredit)
         if df_odenis is not None and musteri_o and tarix_o:
             for _, row in df_odenis.iterrows():
-                val_m = get_clean_company_name(row[musteri_o])
-                val_s = get_clean_company_name(row[sened_o]) if sened_o and sened_o in row else ""
-                val_combined = f"{val_m} {val_s}"
+                val_m = get_core_name(row[musteri_o])
+                val_s = get_core_name(row[sened_o]) if sened_o and sened_o in row else ""
                 
-                is_match = False
-                if target_clean and (target_clean in val_combined):
-                    is_match = True
-                
-                if is_match:
+                # Əgər ana söz (BARISTICA) kontragentdə və ya təyinatda varsa
+                if target_core and (target_core in val_m or target_core in val_s):
                     mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
                     snd = str(row[sened_o]) if sened_o and pd.notna(row[sened_o]) else "Ödəniş"
                     raw_date = row[tarix_o]
