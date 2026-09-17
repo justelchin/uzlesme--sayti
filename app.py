@@ -85,14 +85,7 @@ if df_qaime is not None or df_odenis is not None:
             st.dataframe(df_odenis.head(3))
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("⚙️ Sütun və Məntiq Tənzimlənməsi")
-    
-    # Artıq Ödəniş / Qalıq Məntiqi seçimi
-    qaliq_rejimi = st.sidebar.radio(
-        "💡 Artıq Ödəniş (Avans) Qalığı Harada Göstərilsin?",
-        options=["Debet Tərəfdə (Bizim Alacağımız / Avans)", "Kredit Tərəfdə (Kreditor Borcu)"],
-        index=0
-    )
+    st.sidebar.subheader("⚙️ Sütun Tənzimlənməsi")
 
     cols_qaime = df_qaime.columns.tolist() if df_qaime is not None else []
     cols_odenis = df_odenis.columns.tolist() if df_odenis is not None else []
@@ -229,20 +222,16 @@ if df_qaime is not None or df_odenis is not None:
             
             dovr_df = full_df[(full_df["Tarix"] >= bas_tarix_dt) & (full_df["Tarix"] <= bit_tarix_dt)]
             
-            # Helper funksiya - Qalıq yerləşdirilməsi
+            # Helper funksiya - İlkin qalıq yerləşdirilməsi
             def format_qaliq(qaliq_val):
-                # Əgər 'Debet Tərəfdə (Bizim Alacağımız)' seçilibsə:
-                # Fərq müsbət olarsa Debet, mənfi olarsa (artıq ödəniş) yenə Debetdə (Bizim alacağımız kimi)
-                if "Debet Tərəfdə" in qaliq_rejimi:
-                    fark = abs(qaliq_val)
-                    return f"{fark:,.2f}", "-"
+                if qaliq_val > 0:
+                    return f"{qaliq_val:,.2f}", "-"
+                elif qaliq_val < 0:
+                    return "-", f"{abs(qaliq_val):,.2f}"
                 else:
-                    if qaliq_val >= 0:
-                        return f"{qaliq_val:,.2f}", "-"
-                    else:
-                        return "-", f"{abs(qaliq_val):,.2f}"
+                    return "-", "-"
 
-            ilk_deb, ilk_kred = format_qaliq(ilkin_qaliq) if ilkin_qaliq != 0 else ("-", "-")
+            ilk_deb, ilk_kred = format_qaliq(ilkin_qaliq)
 
             # 1. İlkin Qalıq Sətri
             akt_rows = [{
@@ -279,19 +268,20 @@ if df_qaime is not None or df_odenis is not None:
                 "Kredit (Alacaq)": f"{cem_kredit:,.2f}"
             })
             
-            # 4. YEKUN SON QALIQ SƏTRİ
-            # Müştərinin xalis qalığı (Debet - Kredit)
+            # 4. YEKUN SON QALIQ SƏTRİ (İstədiyiniz Məntiq)
+            # Qaimə cəmi (Debet) > Ödəniş cəmi (Kredit) olarsa -> Kreditor tərəfə yazılır
+            # Ödəniş cəmi > Qaimə cəmi olarsa -> Debitor tərəfə (bizim alacağımız) yazılır
             xalis_fark = cem_debet - cem_kredit
             
-            if "Debet Tərəfdə" in qaliq_rejimi:
-                # Ödəniş artıq olduqda (xalis_fark mənfi və ya ödəniş çox olduqda), 
-                # bu bizim alacağımız / avansımız olduğu üçün DEBET sütununa yazılır!
-                abs_fark = abs(xalis_fark)
-                son_deb = f"{abs_fark:,.2f}" if abs_fark > 0 else "-"
+            if cem_debet > cem_kredit:
+                son_deb = "-"
+                son_kred = f"{abs(xalis_fark):,.2f}"
+            elif cem_kredit > cem_debet:
+                son_deb = f"{abs(xalis_fark):,.2f}"
                 son_kred = "-"
             else:
-                son_deb = f"{xalis_fark:,.2f}" if xalis_fark > 0 else "-"
-                son_kred = f"{abs(xalis_fark):,.2f}" if xalis_fark < 0 else "-"
+                son_deb = "-"
+                son_kred = "-"
             
             akt_rows.append({
                 "Tarix": "-",
