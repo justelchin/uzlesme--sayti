@@ -7,6 +7,9 @@ st.set_page_config(page_title="Üzləşmə Aktı Portalı", layout="wide")
 st.title("📊 Debitor və Kreditor Üzləşmə Portalı")
 st.write("Qaimə və Ödəniş fayllarını yükləyin, sütunları uyğunlaşdırın və avtomatik üzləşmə aktı hazırlayın.")
 
+# Sabit Şirkət Adımız
+BIZIM_SIRKET = '"ŞƏKİ ŞƏRAB" MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ'
+
 st.sidebar.header("📁 Faylları Yükləyin")
 qaime_file = st.sidebar.file_uploader("1. Qaimələr (Satış/Alış) Faylı", type=["xlsx", "xls", "csv"])
 odenis_file = st.sidebar.file_uploader("2. Ödənişlər (Bank/Kassa) Faylı", type=["xlsx", "xls", "csv"])
@@ -15,11 +18,23 @@ def normalize_text(text):
     if pd.isna(text):
         return ""
     text = str(text).upper()
-    # Xüsusi simvolları və lazımsız sözləri təmizləmək
-    for word in ['"','”','“', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ', 'MMC', 'LLC', 'OOO']:
+    for word in ['"', '”', '“', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ', 'MMC', 'LLC', 'OOO']:
         text = text.replace(word, '')
     text = re.sub(r'\s+', ' ', text).strip()
     return text
+
+def clean_number(val):
+    if pd.isna(val):
+        return 0.0
+    val_str = str(val).upper().replace("AZN", "").replace(" ", "").strip()
+    if not val_str or val_str in ["NONE", "NAN"]:
+        return 0.0
+    val_str = val_str.replace(",", ".")
+    try:
+        res = re.findall(r"[-+]?\d*\.\d+|\d+", val_str)
+        return float(res[0]) if res else 0.0
+    except:
+        return 0.0
 
 def load_clean_data(uploaded_file, is_qaime=False):
     if uploaded_file is None:
@@ -93,19 +108,28 @@ if df_qaime is not None or df_odenis is not None:
     mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, key="mb_o") if cols_odenis else None
     sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, key="s_o") if cols_odenis else None
 
-    # Müştəri siyahısı yalnız Qaimələrdən əsas götürülür
+    # Müştəri siyahısını filtrləmək (Rəqəmləri və lazımsız sözləri təmizləmək)
     musteriler_list = []
     if df_qaime is not None and musteri_q in df_qaime.columns:
         raw_m = df_qaime[musteri_q].dropna().astype(str).unique().tolist()
-        musteriler_list = sorted([m for m in raw_m if m.strip() and not m.startswith("Unnamed") and m.lower() not in ["none", "nan"]])
+        for m in raw_m:
+            m_clean = m.strip()
+            # Rəqəm (1.0 və s.) olmayan və real ad olan mətnləri seçirik
+            if m_clean and not m_clean.replace('.', '').isdigit() and not m_clean.startswith("Unnamed") and m_clean.lower() not in ["none", "nan", "adı", "status", "vəen"]:
+                musteriler_list.append(m_clean)
+        musteriler_list = sorted(list(set(musteriler_list)))
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        secilmis_musteri = st.selectbox("Müştərini Seçin", musteriler_list if musteriler_list else ["Məlumat Tapılmadı"])
+        # Axtarışla seçilə bilən müştəri qutusu
+        secilmis_musteri = st.selectbox(
+            "Müştərini Seçin (Adı yazaraq axtara bilərsiniz)", 
+            options=musteriler_list if musteriler_list else ["Məlumat Tapılmadı"]
+        )
     with col2:
-        bas_tarix = st.date_input("Başlanğıc Tarixi", value=pd.to_datetime("2026-01-01"))
+        bas_tarix = st.date_input("Başlanğıc Tarixi", value=pd.to_datetime("2023-01-01"))
     with col3:
         bit_tarix = st.date_input("Bitiş Tarixi", value=pd.to_datetime("2026-12-31"))
         
@@ -120,7 +144,7 @@ if df_qaime is not None or df_odenis is not None:
             q_df = q_df.dropna(subset=[tarix_q])
             
             for _, row in q_df.iterrows():
-                mblg = pd.to_numeric(row[mebleg_q], errors='coerce') or 0.0
+                mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
                 snd = str(row[sened_q]) if pd.notna(row[sened_q]) else ""
                 combined_rows.append({
                     "Tarix": row[tarix_q],
@@ -130,25 +154,23 @@ if df_qaime is not None or df_odenis is not None:
                     "Kredit": 0.0
                 })
         
-        # Ödənişlər (Kredit) - Çevik Axtarış
+        # Ödənişlər (Kredit)
         if df_odenis is not None and musteri_o:
             o_df = df_odenis.copy()
             o_df[tarix_o] = pd.to_datetime(o_df[tarix_o], errors='coerce')
-            o_df = o_df.dropna(subset=[tarix_o])
+            o_df = o_df.dropna(subset=[o_tarix_col] if 'o_tarix_col' in locals() else subset=[tarix_o])
             
-            # Müştəri adının kontragent və ya təyinat hissəsində tapılması
             for _, row in o_df.iterrows():
                 val_m = normalize_text(row[musteri_o])
                 val_s = normalize_text(row[sened_o]) if sened_o in row else ""
                 
-                # Əgər seçilmiş müştəri adı hər hansı sütunda varsa
                 if (target_norm in val_m) or (target_norm in val_s) or (val_m in target_norm and len(val_m) > 3):
-                    mblg = pd.to_numeric(row[mebleg_o], errors='coerce') or 0.0
-                    snd = str(row[sened_o]) if pd.notna(row[sened_o]) else ""
+                    mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
+                    snd = str(row[sened_o]) if pd.notna(row[sened_o]) else "Ödəniş"
                     combined_rows.append({
                         "Tarix": row[tarix_o],
                         "Növ": "Ödəniş",
-                        "Sənəd №": snd,
+                        "Sənəd №": snd[:30],
                         "Debet": 0.0,
                         "Kredit": mblg
                     })
@@ -171,7 +193,7 @@ if df_qaime is not None or df_odenis is not None:
                 "Əməliyyat / Sənəd №": "Dövrə qədər olan ilkin qalıq",
                 "Debet (Borc)": "-",
                 "Kredit (Alacaq)": "-",
-                "Qalıq": ilkin_qaliq
+                "Qalıq": f"{ilkin_qaliq:,.2f}"
             }]
             
             cari_qaliq = ilkin_qaliq
@@ -183,15 +205,34 @@ if df_qaime is not None or df_odenis is not None:
                 akt_rows.append({
                     "Tarix": row["Tarix"].strftime("%d.%m.%Y"),
                     "Əməliyyat / Sənəd №": f"{row['Növ']} № {row['Sənəd №']}",
-                    "Debet (Borc)": debet if debet > 0 else "-",
-                    "Kredit (Alacaq)": kredit if kredit > 0 else "-",
-                    "Qalıq": cari_qaliq
+                    "Debet (Borc)": f"{debet:,.2f}" if debet > 0 else "-",
+                    "Kredit (Alacaq)": f"{kredit:,.2f}" if kredit > 0 else "-",
+                    "Qalıq": f"{cari_qaliq:,.2f}"
                 })
                 
             res_df = pd.DataFrame(akt_rows)
             
-            st.markdown(f"### 📑 {secilmis_musteri} üzrə Birləşdirilmiş Üzləşmə Aktı")
+            st.markdown("---")
+            st.markdown("## 📑 CARİ HESABLARIN ÜZLƏŞDİRİLMƏSİ AKTI")
+            
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                st.markdown(f"**Tərəf 1 (Biz):**  \n{BIZIM_SIRKET}")
+            with col_b2:
+                st.markdown(f"**Tərəf 2 (Qarşı Tərəf):**  \n{secilmis_musteri}")
+                
+            st.markdown(f"**Əhatə etdiyi dövr:** {bas_tarix_dt.strftime('%d.%m.%Y')} — {bit_tarix_dt.strftime('%d.%m.%Y')}")
+            st.markdown("---")
+            
             st.table(res_df)
+            
+            st.markdown("---")
+            st.markdown("### Tərəflərin İmzaları:")
+            col_i1, col_i2 = st.columns(2)
+            with col_i1:
+                st.markdown(f"**{BIZIM_SIRKET}**  \n\nBaş mühasib / Məsul şəxs: _______________  \n*(İmza və M.Y.)*")
+            with col_i2:
+                st.markdown(f"**{secilmis_musteri}**  \n\nBaş mühasib / Məsul şəxs: _______________  \n*(İmza və M.Y.)*")
             
             csv_data = res_df.to_csv(index=False).encode('utf-8')
             st.download_button(
