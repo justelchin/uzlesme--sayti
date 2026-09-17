@@ -203,27 +203,37 @@ if df_qaime is not None or df_odenis is not None:
             
             dovr_df = full_df[(full_df["Tarix"] >= bas_tarix_dt) & (full_df["Tarix"] <= bit_tarix_dt)]
             
+            # 1. İlkin Qalıq Sətri
             akt_rows = [{
                 "Tarix": "-",
                 "Əməliyyat / Sənəd №": "Dövrə qədər olan ilkin qalıq",
-                "Debet (Borc)": "-",
-                "Kredit (Alacaq)": "-",
-                "Qalıq": f"{ilkin_qaliq:,.2f}"
+                "Debet (Borc)": f"{ilkin_qaliq:,.2f}" if ilkin_qaliq > 0 else "-",
+                "Kredit (Alacaq)": f"{abs(ilkin_qaliq):,.2f}" if ilkin_qaliq < 0 else "-"
             }]
             
-            cari_qaliq = ilkin_qaliq
+            # 2. Dövr Əməliyyatları
             for _, row in dovr_df.iterrows():
                 debet = row["Debet"]
                 kredit = row["Kredit"]
-                cari_qaliq += (debet - kredit)
                 
                 akt_rows.append({
                     "Tarix": row["Tarix"].strftime("%d.%m.%Y"),
                     "Əməliyyat / Sənəd №": f"{row['Növ']} № {row['Sənəd №']}",
                     "Debet (Borc)": f"{debet:,.2f}" if debet > 0 else "-",
-                    "Kredit (Alacaq)": f"{kredit:,.2f}" if kredit > 0 else "-",
-                    "Qalıq": f"{cari_qaliq:,.2f}"
+                    "Kredit (Alacaq)": f"{kredit:,.2f}" if kredit > 0 else "-"
                 })
+            
+            # 3. Yekun Son Qalıq Sətri
+            dovr_debet = dovr_df["Debet"].sum()
+            dovr_kredit = dovr_df["Kredit"].sum()
+            son_qaliq = ilkin_qaliq + dovr_debet - dovr_kredit
+            
+            akt_rows.append({
+                "Tarix": "-",
+                "Əməliyyat / Sənəd №": "📌 DÖVRÜN SONUNA OLAN YEKUN QALIQ",
+                "Debet (Borc)": f"{son_qaliq:,.2f}" if son_qaliq > 0 else "-",
+                "Kredit (Alacaq)": f"{abs(son_qaliq):,.2f}" if son_qaliq < 0 else "-"
+            })
                 
             res_df = pd.DataFrame(akt_rows)
             
