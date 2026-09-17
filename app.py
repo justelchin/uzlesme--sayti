@@ -90,13 +90,13 @@ if df_qaime is not None or df_odenis is not None:
     cols_qaime = df_qaime.columns.tolist() if df_qaime is not None else []
     cols_odenis = df_odenis.columns.tolist() if df_odenis is not None else []
     
-    # Otomatik sütun təyini
     def find_default_col(cols, keywords):
         for c in cols:
             if any(k in c.lower() for k in keywords):
                 return c
         return cols[0] if cols else None
 
+    # 1. Qaimə Sütunları
     st.sidebar.markdown("**Qaimə Faylı Sütunları:**")
     tarix_q = st.sidebar.selectbox("Qaimə Tarix Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["tarix"])) if cols_qaime else 0, key="t_q") if cols_qaime else None
     musteri_q = st.sidebar.selectbox("Qaimə Müştəri Adı Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["adı", "müşterı", "alıcı"])) if cols_qaime else 0, key="m_q") if cols_qaime else None
@@ -104,10 +104,14 @@ if df_qaime is not None or df_odenis is not None:
     sened_q = st.sidebar.selectbox("Qaimə № Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["nömr", "№"])) if cols_qaime else 0, key="s_q") if cols_qaime else None
     nov_q = st.sidebar.selectbox("Qaimə Növü Sütunu (İstəyə bağlı)", ["Seçilməyib"] + cols_qaime, index=0, key="n_q") if cols_qaime else "Seçilməyib"
 
+    # 2. Ödəniş Sütunları (Həm Silinmə, Həm Daxilolma)
     st.sidebar.markdown("**Ödəniş Faylı Sütunları:**")
     tarix_o = st.sidebar.selectbox("Ödəniş Tarix Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["keçirilib", "tarix"])) if cols_odenis else 0, key="t_o") if cols_odenis else None
     musteri_o = st.sidebar.selectbox("Ödəniş Müştəri Adı Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["kontragent", "ödəyən"])) if cols_odenis else 0, key="m_o") if cols_odenis else None
-    mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["silinmə", "daxil"])) if cols_odenis else 0, key="mb_o") if cols_odenis else None
+    
+    silinme_o = st.sidebar.selectbox("Silinmə (Müştəri Ödənişi) Sütunu", ["Seçilməyib"] + cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["silinmə"])) + 1 if cols_odenis and find_default_col(cols_odenis, ["silinmə"]) else 0, key="sl_o") if cols_odenis else "Seçilməyib"
+    daxilolma_o = st.sidebar.selectbox("Daxilolma (Geri qaytarılma) Sütunu", ["Seçilməyib"] + cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["daxil"])) + 1 if cols_odenis and find_default_col(cols_odenis, ["daxil"]) else 0, key="dx_o") if cols_odenis else "Seçilməyib"
+    
     sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["təyinat", "açıqlama"])) if cols_odenis else 0, key="s_o") if cols_odenis else None
 
     # Müştəri siyahısı
@@ -148,7 +152,6 @@ if df_qaime is not None or df_odenis is not None:
                     mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
                     snd = str(row[sened_q]).strip() if sened_q and pd.notna(row[sened_q]) else ""
                     
-                    # Qaimə növünü əldə etmək
                     q_type_str = ""
                     if nov_q != "Seçilməyib" and nov_q in row and pd.notna(row[nov_q]):
                         q_type_str = f" ({str(row[nov_q]).strip()})"
@@ -165,26 +168,40 @@ if df_qaime is not None or df_odenis is not None:
                         "Kredit": 0.0
                     })
         
-        # 2. Ödənişlər (Kredit)
+        # 2. Ödənişlər (Kredit / Debet)
         if df_odenis is not None and musteri_o and tarix_o:
             for _, row in df_odenis.iterrows():
                 val_m = get_core_name(row[musteri_o])
                 val_s = get_core_name(row[sened_o]) if sened_o and sened_o in row else ""
                 
                 if target_core and (target_core in val_m or target_core in val_s):
-                    mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
                     snd = str(row[sened_o]) if sened_o and pd.notna(row[sened_o]) else "Ödəniş"
                     raw_date = row[tarix_o]
                     dt_val = pd.to_datetime(raw_date, dayfirst=True, errors='coerce')
                     
-                    combined_rows.append({
-                        "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
-                        "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
-                        "Növ": "Ödəniş",
-                        "Sənəd №": snd[:40],
-                        "Debet": 0.0,
-                        "Kredit": mblg
-                    })
+                    # Silinmə (Ödəniş - Kredit)
+                    mblg_silinme = clean_number(row[silinme_o]) if silinme_o != "Seçilməyib" and silinme_o in row else 0.0
+                    if mblg_silinme > 0:
+                        combined_rows.append({
+                            "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
+                            "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
+                            "Növ": "Ödəniş (Silinmə)",
+                            "Sənəd №": snd[:40],
+                            "Debet": 0.0,
+                            "Kredit": mblg_silinme
+                        })
+                        
+                    # Daxilolma (Geri Qaytarılma - Debet)
+                    mblg_daxil = clean_number(row[daxilolma_o]) if daxilolma_o != "Seçilməyib" and daxilolma_o in row else 0.0
+                    if mblg_daxil > 0:
+                        combined_rows.append({
+                            "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
+                            "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
+                            "Növ": "Mədaxil / Qaytarılma",
+                            "Sənəd №": snd[:40],
+                            "Debet": mblg_daxil,
+                            "Kredit": 0.0
+                        })
                 
         if not combined_rows:
             st.warning("Seçilmiş müştəri üzrə heç bir əməliyyat tapılmadı.")
