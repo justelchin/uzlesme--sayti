@@ -5,7 +5,6 @@ import re
 st.set_page_config(page_title="Üzləşmə Aktı Portalı", layout="wide")
 
 st.title("📊 Debitor və Kreditor Üzləşmə Portalı")
-st.write("Qaimə və Ödəniş fayllarını yükləyin — sistem sütunları avtomatik tanıyaraq üzləşmə aktını hazırlayacaq.")
 
 st.sidebar.header("📁 Faylları Yükləyin")
 qaime_file = st.sidebar.file_uploader("1. Qaimələr Faylı", type=["xlsx", "xls", "csv"])
@@ -20,29 +19,17 @@ def normalize_text(text):
     return re.sub(r'\s+', ' ', text).strip()
 
 def clean_number(val):
-    """Məbləğ sütunlarındakı AZN, vergül, boşluqları təmizləyib float-a çevirir"""
     if pd.isna(val):
         return 0.0
     val_str = str(val).upper().replace("AZN", "").replace(" ", "").strip()
-    if not val_str:
+    if not val_str or val_str == "NONE" or val_str == "NAN":
         return 0.0
-    # Vergülü nöqtəyə çevirmək
-    if "," in val_str and "." in val_str:
-        val_str = val_str.replace(",", "")
-    elif "," in val_str:
-        val_str = val_str.replace(",", ".")
-    
+    val_str = val_str.replace(",", ".")
     try:
-        return float(re.sub(r'[^\d.]', '', val_str))
+        res = re.findall(r"[-+]?\d*\.\d+|\d+", val_str)
+        return float(res[0]) if res else 0.0
     except:
         return 0.0
-
-def find_column(df, possible_names):
-    for col in df.columns:
-        col_clean = str(col).strip().lower()
-        if any(name.lower() in col_clean for name in possible_names):
-            return col
-    return None
 
 def load_clean_data(uploaded_file, is_qaime=False):
     if uploaded_file is None:
@@ -57,11 +44,11 @@ def load_clean_data(uploaded_file, is_qaime=False):
         for i, row in df_raw.iterrows():
             row_str = " ".join([str(val).strip().lower() for val in row.values if pd.notna(val)])
             if is_qaime:
-                if ("tarix" in row_str or "çıxarış" in row_str) and ("məbləğ" in row_str or "status" in row_str or "adı" in row_str):
+                if any(k in row_str for k in ["tarix", "qaimə", "məbləğ", "alıcı", "adı"]):
                     header_row = i
                     break
             else:
-                if any(k in row_str for k in ["bank tərəfindən", "çıxarış", "silinmə", "daxil olma", "kontragent"]):
+                if any(k in row_str for k in ["bank", "çıxarış", "silinmə", "daxil olma", "kontragent", "azn"]):
                     header_row = i
                     break
 
@@ -81,33 +68,35 @@ df_odenis = load_clean_data(odenis_file, is_qaime=False)
 
 if df_qaime is not None or df_odenis is not None:
     st.markdown("---")
-    col_p1, col_p2 = st.columns(2)
-    with col_p1:
-        if df_qaime is not None:
-            st.subheader("📋 Qaimələr Faylı")
-            st.dataframe(df_qaime.head(3))
-    with col_p2:
-        if df_odenis is not None:
-            st.subheader("📋 Ödənişlər Faylı")
-            st.dataframe(df_odenis.head(3))
+    
+    # Sol Paneldə Sütun Təyinatı
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("⚙️ Məbləğ Sütunlarını Dəqiqləşdirin")
+    
+    q_cols = df_qaime.columns.tolist() if df_qaime is not None else []
+    o_cols = df_odenis.columns.tolist() if df_odenis is not None else []
+    
+    # Avtomatik default indeksləri tapmaq
+    q_mbl_idx = next((i for i, c in enumerate(q_cols) if any(x in c.lower() for x in ["yekun", "məbləğ", "cəmi"])), 0) if q_cols else 0
+    o_mbl_idx = next((i for i, c in enumerate(o_cols) if any(x in c.lower() for x in ["silinmə", "daxil", "məbləğ", "12240"])), 0) if o_cols else 0
+    
+    q_mebleg_col = st.sidebar.selectbox("Qaimə Məbləğ Sütunu", q_cols, index=q_mbl_idx) if q_cols else None
+    o_mebleg_col = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", o_cols, index=o_mbl_idx) if o_cols else None
 
-    # Avtomatik sütun təyini
-    q_tarix_col = find_column(df_qaime, ["Qaimə tarixi", "Tarix", "Verilmə tarixi"]) if df_qaime is not None else None
-    q_musteri_col = find_column(df_qaime, ["Adı", "Müştəri", "Alıcı", "Satıcı"]) if df_qaime is not None else None
-    q_mebleg_col = find_column(df_qaime, ["Yekun məbləğ", "Məbləğ", "Cəmi"]) if df_qaime is not None else None
-    q_sened_col = find_column(df_qaime, ["Qaimə nömrəsi", "№", "Sənəd"]) if df_qaime is not None else None
+    # Avtomatik digər sütunlar
+    q_tarix_col = next((c for c in q_cols if "tarix" in c.lower()), q_cols[0] if q_cols else None)
+    q_musteri_col = next((c for c in q_cols if any(x in c.lower() for x in ["adı", "müştəri", "alıcı"])), q_cols[0] if q_cols else None)
+    q_sened_col = next((c for c in q_cols if any(x in c.lower() for x in ["nömrə", "№", "sənəd"])), q_cols[0] if q_cols else None)
 
-    o_tarix_col = find_column(df_odenis, ["Bank tərəfindən keçirilib", "Tarix", "Çıxarış"]) if df_odenis is not None else None
-    o_musteri_col = find_column(df_odenis, ["Kontragent", "Ödəyən", "Müştəri"]) if df_odenis is not None else None
-    o_mebleg_col = find_column(df_odenis, ["Silinmə", "Daxil olma", "Məbləğ"]) if df_odenis is not None else None
-    o_sened_col = find_column(df_odenis, ["Ödənişin təyinatı", "Təyinat", "Açıqlama"]) if df_odenis is not None else None
+    o_tarix_col = next((c for c in o_cols if "tarix" in c.lower() or "keçirilib" in c.lower()), o_cols[0] if o_cols else None)
+    o_musteri_col = next((c for c in o_cols if any(x in c.lower() for x in ["kontragent", "müştəri", "ödəyən"])), o_cols[0] if o_cols else None)
+    o_sened_col = next((c for c in o_cols if any(x in c.lower() for x in ["təyinat", "açıqlama"])), o_cols[0] if o_cols else None)
 
     musteriler_list = []
     if df_qaime is not None and q_musteri_col:
         raw_m = df_qaime[q_musteri_col].dropna().astype(str).unique().tolist()
         musteriler_list = sorted([m for m in raw_m if m.strip() and not m.startswith("Unnamed") and m.lower() not in ["none", "nan"]])
 
-    st.markdown("---")
     col1, col2, col3 = st.columns(3)
     with col1:
         secilmis_musteri = st.selectbox("Müştərini Seçin", musteriler_list if musteriler_list else ["Məlumat Tapılmadı"])
@@ -150,12 +139,10 @@ if df_qaime is not None or df_odenis is not None:
                 if (target_norm in val_m) or (target_norm in val_s) or (val_m in target_norm and len(val_m) > 3):
                     mblg = clean_number(row[o_mebleg_col]) if o_mebleg_col else 0.0
                     snd = str(row[o_sened_col]) if o_sened_col and pd.notna(row[o_sened_col]) else "Ödəniş"
-                    # Sənəd nömrəsini çox uzatmadan göstərək
-                    snd_short = snd[:40] + ("..." if len(snd) > 40 else "")
                     combined_rows.append({
                         "Tarix": row[o_tarix_col],
                         "Növ": "Ödəniş",
-                        "Sənəd №": snd_short,
+                        "Sənəd №": snd[:30],
                         "Debet": 0.0,
                         "Kredit": mblg
                     })
