@@ -10,44 +10,51 @@ st.sidebar.header("📁 Faylları Yükləyin")
 qaime_file = st.sidebar.file_uploader("1. Qaimələr (Satış/Alış) Faylı", type=["xlsx", "xls", "csv"])
 odenis_file = st.sidebar.file_uploader("2. Ödənişlər (Bank/Kassa) Faylı", type=["xlsx", "xls", "csv"])
 
-def load_clean_data(uploaded_file):
+def load_clean_data(uploaded_file, is_qaime=False):
     if uploaded_file is None:
         return None
     
     try:
-        # Faylı oxuyuruq
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
         else:
             df_raw = pd.read_excel(uploaded_file, header=None)
             
-        # Başlıq sətrini avtomatik axtarırıq
         header_row = 0
+        found = False
+        
+        # Əgər Qaimə faylıdırsa, № və ya Status sözünü axtarırıq (e-qaimə strukturuna uyğun)
         for i, row in df_raw.iterrows():
-            row_str = " ".join([str(val).lower() for val in row.values if pd.notna(val)])
-            if any(k in row_str for k in ["tarix", "№", "status", "qaimə", "məbləğ", "müştəri", "alınma", "ödəniş", "tərəf"]):
-                header_row = i
-                break
-                
+            row_vals = [str(val).strip().lower() for val in row.values if pd.notna(val)]
+            if is_qaime:
+                if any(k in row_vals for k in ["№", "status", "tarix", "vergi ödəyicisinin adı"]):
+                    header_row = i
+                    found = True
+                    break
+            else:
+                if any("tarix" in k or "bank" in k or "çıxarış" in k or "ödəniş" in k for k in row_vals):
+                    header_row = i
+                    found = True
+                    break
+                    
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, skiprows=header_row)
+            df = pd.read_csv(uploaded_file, skiprows=header_row if found else 0)
         else:
-            df = pd.read_excel(uploaded_file, skiprows=header_row)
+            df = pd.read_excel(uploaded_file, skiprows=header_row if found else 0)
             
-        # Unnamed sütunları təmizləmək və ya adlandırmaq
+        # Sütun adlarını təmizləmək
         df.columns = [str(c).strip() for c in df.columns]
         return df
     except Exception as e:
         st.error(f"Fayl oxunarkən xəta: {e}")
         return None
 
-df_qaime = load_clean_data(qaime_file)
-df_odenis = load_clean_data(odenis_file)
+df_qaime = load_clean_data(qaime_file, is_qaime=True)
+df_odenis = load_clean_data(odenis_file, is_qaime=False)
 
 if df_qaime is not None or df_odenis is not None:
     st.markdown("---")
     
-    # Faylların önizləməsi
     col_p1, col_p2 = st.columns(2)
     with col_p1:
         if df_qaime is not None:
@@ -61,32 +68,29 @@ if df_qaime is not None or df_odenis is not None:
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚙️ Sütun Uyğunlaşdırması")
     
-    # Sütun siyahısını toplayırıq
     cols_qaime = df_qaime.columns.tolist() if df_qaime is not None else []
     cols_odenis = df_odenis.columns.tolist() if df_odenis is not None else []
     
-    # Qaimə üçün sütunlar
     st.sidebar.markdown("**Qaimə Faylı Sütunları:**")
     tarix_q = st.sidebar.selectbox("Qaimə Tarix Sütunu", cols_qaime, key="t_q") if cols_qaime else None
     musteri_q = st.sidebar.selectbox("Qaimə Müştəri Adı Sütunu", cols_qaime, key="m_q") if cols_qaime else None
     mebleg_q = st.sidebar.selectbox("Qaimə Məbləğ Sütunu", cols_qaime, key="mb_q") if cols_qaime else None
     sened_q = st.sidebar.selectbox("Qaimə № Sütunu", cols_qaime, key="s_q") if cols_qaime else None
     
-    # Ödəniş üçün sütunlar
     st.sidebar.markdown("**Ödəniş Faylı Sütunları:**")
     tarix_o = st.sidebar.selectbox("Ödəniş Tarix Sütunu", cols_odenis, key="t_o") if cols_odenis else None
     musteri_o = st.sidebar.selectbox("Ödəniş Müştəri Adı Sütunu", cols_odenis, key="m_o") if cols_odenis else None
     mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, key="mb_o") if cols_odenis else None
     sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, key="s_o") if cols_odenis else None
 
-    # Müştəri siyahısı
+    # Müştəri siyahısını toplamaq
     musteriler = set()
     if df_qaime is not None and musteri_q in df_qaime.columns:
         musteriler.update(df_qaime[musteri_q].dropna().astype(str).unique())
     if df_odenis is not None and musteri_o in df_odenis.columns:
         musteriler.update(df_odenis[musteri_o].dropna().astype(str).unique())
         
-    musteriler_list = sorted([m for m in musteriler if m.strip() and not m.startswith("Unnamed")])
+    musteriler_list = sorted([m for m in musteriler if m.strip() and not m.startswith("Unnamed") and m.lower() != "none"])
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
