@@ -18,18 +18,27 @@ def normalize_text(text):
         text = text.replace(word, '')
     return re.sub(r'\s+', ' ', text).strip()
 
-def clean_number(val):
-    if pd.isna(val):
-        return 0.0
-    val_str = str(val).upper().replace("AZN", "").replace(" ", "").strip()
-    if not val_str or val_str in ["NONE", "NAN"]:
-        return 0.0
-    val_str = val_str.replace(",", ".")
-    try:
-        res = re.findall(r"[-+]?\d*\.\d+|\d+", val_str)
-        return float(res[0]) if res else 0.0
-    except:
-        return 0.0
+def extract_first_amount(row, exclude_cols=[]):
+    """Sətir boyunca rəqəm, nöqtə və ya vergül ehtiva edən ilk real məbləği tapır"""
+    for col_idx, val in row.items():
+        if col_idx in exclude_cols or pd.isna(val):
+            continue
+        val_str = str(val).strip().upper().replace("AZN", "").replace(" ", "")
+        # Tarix, VÖEN və ya Qaimə nömrəsini məbləğ kimi götürməmək üçün süzgəc
+        if not val_str or "-" in val_str or ":" in val_str or len(val_str) > 12:
+            continue
+        
+        # Standartlaşdırma
+        val_str = val_str.replace(",", ".")
+        match = re.search(r'^\d+(\.\d+)?$', val_str)
+        if match:
+            try:
+                num = float(match.group(0))
+                if num > 0:
+                    return num
+            except:
+                pass
+    return 0.0
 
 def load_clean_data(uploaded_file, is_qaime=False):
     if uploaded_file is None:
@@ -72,19 +81,16 @@ if df_qaime is not None or df_odenis is not None:
     q_cols = df_qaime.columns.tolist() if df_qaime is not None else []
     o_cols = df_odenis.columns.tolist() if df_odenis is not None else []
 
-    # Qaimə üçün sütunların dəqiq tespiti
+    # Sütun tespiti
     q_tarix_col = next((c for c in q_cols if any(x in c.lower() for x in ["qaimə tarixi", "tarix"])), q_cols[0] if q_cols else None)
     q_musteri_col = next((c for c in q_cols if c.lower() in ["adı", "müştəri", "alıcı", "satıcı"] or "kontragent" in c.lower()), q_cols[0] if q_cols else None)
-    q_mebleg_col = next((c for c in q_cols if any(x in c.lower() for x in ["yekun məbləğ", "məbləğ", "cəmi", "tutar"])), q_cols[-1] if q_cols else None)
     q_sened_col = next((c for c in q_cols if any(x in c.lower() for x in ["qaimə nömrəsi", "nömrə", "№"])), q_cols[0] if q_cols else None)
 
-    # Ödəniş üçün sütunların tespiti
     o_tarix_col = next((c for c in o_cols if any(x in c.lower() for x in ["bank tərəfindən", "tarix"])), o_cols[0] if o_cols else None)
     o_musteri_col = next((c for c in o_cols if "kontragent" in c.lower() or "ödəyən" in c.lower()), o_cols[0] if o_cols else None)
-    o_mebleg_col = next((c for c in o_cols if any(x in c.lower() for x in ["silinmə", "daxil olma", "məbləğ"])), o_cols[-1] if o_cols else None)
     o_sened_col = next((c for c in o_cols if any(x in c.lower() for x in ["təyinat", "açıqlama"])), o_cols[0] if o_cols else None)
 
-    # Düzgün Müştəri Siyahısı
+    # Müştəri Siyahısı
     musteriler_list = []
     if df_qaime is not None and q_musteri_col:
         raw_m = df_qaime[q_musteri_col].dropna().astype(str).unique().tolist()
@@ -109,7 +115,7 @@ if df_qaime is not None or df_odenis is not None:
             q_df = q_df.dropna(subset=[q_tarix_col])
             
             for _, row in q_df.iterrows():
-                mblg = clean_number(row[q_mebleg_col]) if q_mebleg_col else 0.0
+                mblg = extract_first_amount(row, exclude_cols=[q_tarix_col, q_musteri_col, q_sened_col])
                 snd = str(row[q_sened_col]) if q_sened_col and pd.notna(row[q_sened_col]) else ""
                 combined_rows.append({
                     "Tarix": row[q_tarix_col],
@@ -130,7 +136,7 @@ if df_qaime is not None or df_odenis is not None:
                 val_s = normalize_text(row[o_sened_col]) if o_sened_col in row else ""
                 
                 if (target_norm in val_m) or (target_norm in val_s) or (val_m in target_norm and len(val_m) > 3):
-                    mblg = clean_number(row[o_mebleg_col]) if o_mebleg_col else 0.0
+                    mblg = extract_first_amount(row, exclude_cols=[o_tarix_col, o_musteri_col, o_sened_col])
                     snd = str(row[o_sened_col]) if o_sened_col and pd.notna(row[o_sened_col]) else "Ödəniş"
                     combined_rows.append({
                         "Tarix": row[o_tarix_col],
