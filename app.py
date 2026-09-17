@@ -17,7 +17,6 @@ def normalize_text(text):
     if pd.isna(text):
         return ""
     text = str(text).upper()
-    # Hər iki fayldakı İ/I və C/K fərqlərini tam bərabərləşdiririk
     replacements = {
         'İ': 'I', 'Ə': 'E', 'Ğ': 'G', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U',
         '"': '', '”': '', '“': '', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ': '', 
@@ -91,17 +90,25 @@ if df_qaime is not None or df_odenis is not None:
     cols_qaime = df_qaime.columns.tolist() if df_qaime is not None else []
     cols_odenis = df_odenis.columns.tolist() if df_odenis is not None else []
     
+    # Otomatik sütun təyini
+    def find_default_col(cols, keywords):
+        for c in cols:
+            if any(k in c.lower() for k in keywords):
+                return c
+        return cols[0] if cols else None
+
     st.sidebar.markdown("**Qaimə Faylı Sütunları:**")
-    tarix_q = st.sidebar.selectbox("Qaimə Tarix Sütunu", cols_qaime, key="t_q") if cols_qaime else None
-    musteri_q = st.sidebar.selectbox("Qaimə Müştəri Adı Sütunu", cols_qaime, key="m_q") if cols_qaime else None
-    mebleg_q = st.sidebar.selectbox("Qaimə Məbləğ Sütunu", cols_qaime, key="mb_q") if cols_qaime else None
-    sened_q = st.sidebar.selectbox("Qaimə № Sütunu", cols_qaime, key="s_q") if cols_qaime else None
-    
+    tarix_q = st.sidebar.selectbox("Qaimə Tarix Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["tarix"])) if cols_qaime else 0, key="t_q") if cols_qaime else None
+    musteri_q = st.sidebar.selectbox("Qaimə Müştəri Adı Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["adı", "müşterı", "alıcı"])) if cols_qaime else 0, key="m_q") if cols_qaime else None
+    mebleg_q = st.sidebar.selectbox("Qaimə Məbləğ Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["yekun", "məbləğ"])) if cols_qaime else 0, key="mb_q") if cols_qaime else None
+    sened_q = st.sidebar.selectbox("Qaimə № Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["nömr", "№"])) if cols_qaime else 0, key="s_q") if cols_qaime else None
+    nov_q = st.sidebar.selectbox("Qaimə Növü Sütunu (İstəyə bağlı)", ["Seçilməyib"] + cols_qaime, index=0, key="n_q") if cols_qaime else "Seçilməyib"
+
     st.sidebar.markdown("**Ödəniş Faylı Sütunları:**")
-    tarix_o = st.sidebar.selectbox("Ödəniş Tarix Sütunu", cols_odenis, key="t_o") if cols_odenis else None
-    musteri_o = st.sidebar.selectbox("Ödəniş Müştəri Adı Sütunu", cols_odenis, key="m_o") if cols_odenis else None
-    mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, key="mb_o") if cols_odenis else None
-    sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, key="s_o") if cols_odenis else None
+    tarix_o = st.sidebar.selectbox("Ödəniş Tarix Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["keçirilib", "tarix"])) if cols_odenis else 0, key="t_o") if cols_odenis else None
+    musteri_o = st.sidebar.selectbox("Ödəniş Müştəri Adı Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["kontragent", "ödəyən"])) if cols_odenis else 0, key="m_o") if cols_odenis else None
+    mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["silinmə", "daxil"])) if cols_odenis else 0, key="mb_o") if cols_odenis else None
+    sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["təyinat", "açıqlama"])) if cols_odenis else 0, key="s_o") if cols_odenis else None
 
     # Müştəri siyahısı
     musteriler_list = []
@@ -140,6 +147,12 @@ if df_qaime is not None or df_odenis is not None:
                 if (val_raw == target_raw) or (target_core == val_core):
                     mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
                     snd = str(row[sened_q]).strip() if sened_q and pd.notna(row[sened_q]) else ""
+                    
+                    # Qaimə növünü əldə etmək
+                    q_type_str = ""
+                    if nov_q != "Seçilməyib" and nov_q in row and pd.notna(row[nov_q]):
+                        q_type_str = f" ({str(row[nov_q]).strip()})"
+                        
                     raw_date = row[tarix_q]
                     dt_val = pd.to_datetime(raw_date, dayfirst=True, errors='coerce')
                     
@@ -147,7 +160,7 @@ if df_qaime is not None or df_odenis is not None:
                         "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
                         "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
                         "Növ": "Qaimə",
-                        "Sənəd №": snd,
+                        "Sənəd №": f"{snd}{q_type_str}",
                         "Debet": mblg,
                         "Kredit": 0.0
                     })
@@ -158,7 +171,6 @@ if df_qaime is not None or df_odenis is not None:
                 val_m = get_core_name(row[musteri_o])
                 val_s = get_core_name(row[sened_o]) if sened_o and sened_o in row else ""
                 
-                # Əgər ana söz (BARISTICA) kontragentdə və ya təyinatda varsa
                 if target_core and (target_core in val_m or target_core in val_s):
                     mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
                     snd = str(row[sened_o]) if sened_o and pd.notna(row[sened_o]) else "Ödəniş"
@@ -169,7 +181,7 @@ if df_qaime is not None or df_odenis is not None:
                         "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
                         "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
                         "Növ": "Ödəniş",
-                        "Sənəd №": snd[:35],
+                        "Sənəd №": snd[:40],
                         "Debet": 0.0,
                         "Kredit": mblg
                     })
