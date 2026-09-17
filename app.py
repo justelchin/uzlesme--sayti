@@ -19,8 +19,25 @@ def normalize_text(text):
         text = text.replace(word, '')
     return re.sub(r'\s+', ' ', text).strip()
 
+def clean_number(val):
+    """Məbləğ sütunlarındakı AZN, vergül, boşluqları təmizləyib float-a çevirir"""
+    if pd.isna(val):
+        return 0.0
+    val_str = str(val).upper().replace("AZN", "").replace(" ", "").strip()
+    if not val_str:
+        return 0.0
+    # Vergülü nöqtəyə çevirmək
+    if "," in val_str and "." in val_str:
+        val_str = val_str.replace(",", "")
+    elif "," in val_str:
+        val_str = val_str.replace(",", ".")
+    
+    try:
+        return float(re.sub(r'[^\d.]', '', val_str))
+    except:
+        return 0.0
+
 def find_column(df, possible_names):
-    """Cədvəldə verilmiş açar sözlərə uyğun gələn ilk sütunu avtomatik tapır"""
     for col in df.columns:
         col_clean = str(col).strip().lower()
         if any(name.lower() in col_clean for name in possible_names):
@@ -85,7 +102,6 @@ if df_qaime is not None or df_odenis is not None:
     o_mebleg_col = find_column(df_odenis, ["Silinmə", "Daxil olma", "Məbləğ"]) if df_odenis is not None else None
     o_sened_col = find_column(df_odenis, ["Ödənişin təyinatı", "Təyinat", "Açıqlama"]) if df_odenis is not None else None
 
-    # Müştəri siyahısı
     musteriler_list = []
     if df_qaime is not None and q_musteri_col:
         raw_m = df_qaime[q_musteri_col].dropna().astype(str).unique().tolist()
@@ -104,14 +120,14 @@ if df_qaime is not None or df_odenis is not None:
         combined_rows = []
         target_norm = normalize_text(secilmis_musteri)
         
-        # 1. Qaimələri oxumaq (Debet)
+        # 1. Qaimələr (Debet)
         if df_qaime is not None and q_musteri_col:
             q_df = df_qaime[df_qaime[q_musteri_col].astype(str) == secilmis_musteri].copy()
             q_df[q_tarix_col] = pd.to_datetime(q_df[q_tarix_col], errors='coerce')
             q_df = q_df.dropna(subset=[q_tarix_col])
             
             for _, row in q_df.iterrows():
-                mblg = pd.to_numeric(row[q_mebleg_col], errors='coerce') or 0.0
+                mblg = clean_number(row[q_mebleg_col]) if q_mebleg_col else 0.0
                 snd = str(row[q_sened_col]) if q_sened_col and pd.notna(row[q_sened_col]) else ""
                 combined_rows.append({
                     "Tarix": row[q_tarix_col],
@@ -121,7 +137,7 @@ if df_qaime is not None or df_odenis is not None:
                     "Kredit": 0.0
                 })
         
-        # 2. Ödənişləri oxumaq (Kredit)
+        # 2. Ödənişlər (Kredit)
         if df_odenis is not None:
             o_df = df_odenis.copy()
             o_df[o_tarix_col] = pd.to_datetime(o_df[o_tarix_col], errors='coerce')
@@ -131,14 +147,15 @@ if df_qaime is not None or df_odenis is not None:
                 val_m = normalize_text(row[o_musteri_col]) if o_musteri_col in row else ""
                 val_s = normalize_text(row[o_sened_col]) if o_sened_col in row else ""
                 
-                # Ağıllı Eyniləşdirmə
                 if (target_norm in val_m) or (target_norm in val_s) or (val_m in target_norm and len(val_m) > 3):
-                    mblg = pd.to_numeric(row[o_mebleg_col], errors='coerce') or 0.0
-                    snd = str(row[o_sened_col]) if o_sened_col and pd.notna(row[o_sened_col]) else ""
+                    mblg = clean_number(row[o_mebleg_col]) if o_mebleg_col else 0.0
+                    snd = str(row[o_sened_col]) if o_sened_col and pd.notna(row[o_sened_col]) else "Ödəniş"
+                    # Sənəd nömrəsini çox uzatmadan göstərək
+                    snd_short = snd[:40] + ("..." if len(snd) > 40 else "")
                     combined_rows.append({
                         "Tarix": row[o_tarix_col],
                         "Növ": "Ödəniş",
-                        "Sənəd №": snd[:30],  # Açıqlamanın ilk hissəsi
+                        "Sənəd №": snd_short,
                         "Debet": 0.0,
                         "Kredit": mblg
                     })
@@ -161,7 +178,7 @@ if df_qaime is not None or df_odenis is not None:
                 "Əməliyyat / Sənəd №": "Dövrə qədər olan ilkin qalıq",
                 "Debet (Borc)": "-",
                 "Kredit (Alacaq)": "-",
-                "Qalıq": ilkin_qaliq
+                "Qalıq": f"{ilkin_qaliq:,.2f}"
             }]
             
             cari_qaliq = ilkin_qaliq
@@ -173,9 +190,9 @@ if df_qaime is not None or df_odenis is not None:
                 akt_rows.append({
                     "Tarix": row["Tarix"].strftime("%d.%m.%Y"),
                     "Əməliyyat / Sənəd №": f"{row['Növ']} - {row['Sənəd №']}",
-                    "Debet (Borc)": debet if debet > 0 else "-",
-                    "Kredit (Alacaq)": kredit if kredit > 0 else "-",
-                    "Qalıq": cari_qaliq
+                    "Debet (Borc)": f"{debet:,.2f}" if debet > 0 else "-",
+                    "Kredit (Alacaq)": f"{kredit:,.2f}" if kredit > 0 else "-",
+                    "Qalıq": f"{cari_qaliq:,.2f}"
                 })
                 
             res_df = pd.DataFrame(akt_rows)
