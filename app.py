@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 
 st.set_page_config(page_title="Üzləşmə Aktı Portalı", layout="wide")
 
@@ -9,6 +10,16 @@ st.write("Qaimə və Ödəniş fayllarını yükləyin, sütunları uyğunlaşd�
 st.sidebar.header("📁 Faylları Yükləyin")
 qaime_file = st.sidebar.file_uploader("1. Qaimələr (Satış/Alış) Faylı", type=["xlsx", "xls", "csv"])
 odenis_file = st.sidebar.file_uploader("2. Ödənişlər (Bank/Kassa) Faylı", type=["xlsx", "xls", "csv"])
+
+def normalize_text(text):
+    if pd.isna(text):
+        return ""
+    text = str(text).upper()
+    # Xüsusi simvolları və lazımsız sözləri təmizləmək
+    for word in ['"','”','“', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ', 'MMC', 'LLC', 'OOO']:
+        text = text.replace(word, '')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 def load_clean_data(uploaded_file, is_qaime=False):
     if uploaded_file is None:
@@ -21,26 +32,16 @@ def load_clean_data(uploaded_file, is_qaime=False):
             df_raw = pd.read_excel(uploaded_file, header=None)
             
         header_row = None
-        
         for i, row in df_raw.iterrows():
             row_vals = [str(val).strip().lower() for val in row.values if pd.notna(val)]
             row_str = " ".join(row_vals)
             
             if is_qaime:
-                # Filtr sətrini keçmək üçün bir neçə sütun sözünü bir arada axtarırıq
-                if ("tarix" in row_str or "çıxarış" in row_str) and ("məbləğ" in row_str or "status" in row_str or "alıcı" in row_str or "satıcı" in row_str or "vəziyyət" in row_str):
+                if ("tarix" in row_str or "çıxarış" in row_str) and ("məbləğ" in row_str or "status" in row_str or "alıcı" in row_str or "adı" in row_str):
                     header_row = i
                     break
             else:
-                if any(k in row_str for k in ["bank tərəfindən", "çıxarış", "silinmə", "daxil olma", "tarix"]):
-                    header_row = i
-                    break
-                    
-        if header_row is None:
-            # Əgər şərt tapılmazsa, "Nəşr tarixi" və ya "Tarix" sözü olan ilk sətri götürək
-            for i, row in df_raw.iterrows():
-                row_str = " ".join([str(val).strip().lower() for val in row.values if pd.notna(val)])
-                if "tarix" in row_str or "məbləğ" in row_str:
+                if any(k in row_str for k in ["bank tərəfindən", "çıxarış", "silinmə", "daxil olma", "tarix", "kontragent"]):
                     header_row = i
                     break
                     
@@ -68,11 +69,11 @@ if df_qaime is not None or df_odenis is not None:
     with col_p1:
         if df_qaime is not None:
             st.subheader("📋 Qaimələr Faylı (Önizləmə)")
-            st.dataframe(df_qaime.head(5))
+            st.dataframe(df_qaime.head(3))
     with col_p2:
         if df_odenis is not None:
             st.subheader("📋 Ödənişlər Faylı (Önizləmə)")
-            st.dataframe(df_odenis.head(5))
+            st.dataframe(df_odenis.head(3))
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚙️ Sütun Uyğunlaşdırması")
@@ -92,14 +93,11 @@ if df_qaime is not None or df_odenis is not None:
     mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, key="mb_o") if cols_odenis else None
     sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, key="s_o") if cols_odenis else None
 
-    # Müştəri siyahısını toplamaq
-    musteriler = set()
+    # Müştəri siyahısı yalnız Qaimələrdən əsas götürülür
+    musteriler_list = []
     if df_qaime is not None and musteri_q in df_qaime.columns:
-        musteriler.update(df_qaime[musteri_q].dropna().astype(str).unique())
-    if df_odenis is not None and musteri_o in df_odenis.columns:
-        musteriler.update(df_odenis[musteri_o].dropna().astype(str).unique())
-        
-    musteriler_list = sorted([m for m in musteriler if m.strip() and not m.startswith("Unnamed") and m.lower() not in ["none", "nan", "status", "vəen"]])
+        raw_m = df_qaime[musteri_q].dropna().astype(str).unique().tolist()
+        musteriler_list = sorted([m for m in raw_m if m.strip() and not m.startswith("Unnamed") and m.lower() not in ["none", "nan"]])
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
@@ -113,6 +111,7 @@ if df_qaime is not None or df_odenis is not None:
         
     if st.button("🚀 Avtomatik Üzləşmə Aktı Yarat"):
         combined_rows = []
+        target_norm = normalize_text(secilmis_musteri)
         
         # Qaimələr (Debet)
         if df_qaime is not None and musteri_q:
@@ -131,22 +130,28 @@ if df_qaime is not None or df_odenis is not None:
                     "Kredit": 0.0
                 })
         
-        # Ödənişlər (Kredit)
+        # Ödənişlər (Kredit) - Çevik Axtarış
         if df_odenis is not None and musteri_o:
-            o_df = df_odenis[df_odenis[musteri_o].astype(str) == secilmis_musteri].copy()
+            o_df = df_odenis.copy()
             o_df[tarix_o] = pd.to_datetime(o_df[tarix_o], errors='coerce')
             o_df = o_df.dropna(subset=[tarix_o])
             
+            # Müştəri adının kontragent və ya təyinat hissəsində tapılması
             for _, row in o_df.iterrows():
-                mblg = pd.to_numeric(row[mebleg_o], errors='coerce') or 0.0
-                snd = str(row[sened_o]) if pd.notna(row[sened_o]) else ""
-                combined_rows.append({
-                    "Tarix": row[tarix_o],
-                    "Növ": "Ödəniş",
-                    "Sənəd №": snd,
-                    "Debet": 0.0,
-                    "Kredit": mblg
-                })
+                val_m = normalize_text(row[musteri_o])
+                val_s = normalize_text(row[sened_o]) if sened_o in row else ""
+                
+                # Əgər seçilmiş müştəri adı hər hansı sütunda varsa
+                if (target_norm in val_m) or (target_norm in val_s) or (val_m in target_norm and len(val_m) > 3):
+                    mblg = pd.to_numeric(row[mebleg_o], errors='coerce') or 0.0
+                    snd = str(row[sened_o]) if pd.notna(row[sened_o]) else ""
+                    combined_rows.append({
+                        "Tarix": row[tarix_o],
+                        "Növ": "Ödəniş",
+                        "Sənəd №": snd,
+                        "Debet": 0.0,
+                        "Kredit": mblg
+                    })
                 
         if not combined_rows:
             st.warning("Seçilmiş müştəri üzrə heç bir əməliyyat tapılmadı.")
