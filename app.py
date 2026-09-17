@@ -18,7 +18,7 @@ def normalize_text(text):
         return ""
     text = str(text).upper()
     replacements = {
-        'İ': 'I', 'Ə': 'E', 'Ğ': 'G', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U',
+        'İ': 'I', 'Ə': 'E', 'Ğ': 'G', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U', 'K': 'C',
         '"': '', '”': '', '“': '', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ': '', 
         'MMC': '', 'LLC': '', 'OOO': ''
     }
@@ -26,12 +26,11 @@ def normalize_text(text):
         text = text.replace(k, v)
     return re.sub(r'\s+', ' ', text).strip()
 
-def get_core_keywords(text):
-    """Gərəksiz ümumi sözləri çıxarıb yalnız əsas firma adını saxlayır"""
+def get_clean_company_name(text):
+    """Müştəri adından dırnaq, MMC və gərəksiz sözləri silib təmiz kök adı qaytarır"""
     norm = normalize_text(text)
-    stop_words = {'MƏHDUD', 'MƏSULİYYƏTLİ', 'CƏMİYYƏTİ', 'MMC', 'LLC', 'AZERBAIJAN', 'BAKU', 'FIRMASI', 'SIRKETI'}
-    words = [w for w in norm.split() if len(w) >= 3 and w not in stop_words]
-    return words
+    words = [w for w in norm.split() if len(w) >= 3 and w not in ['MƏHDUD', 'MƏSULİYYƏTLİ', 'CƏMİYYƏTİ', 'MMC', 'LLC']]
+    return " ".join(words) if words else norm
 
 def clean_number(val):
     if pd.isna(val):
@@ -46,43 +45,25 @@ def clean_number(val):
     except:
         return 0.0
 
-def parse_date_safely(series):
-    parsed = pd.to_datetime(series, dayfirst=True, errors='coerce')
-    if parsed.isna().sum() > len(series) * 0.5:
-        parsed = pd.to_datetime(series, errors='coerce')
-    return parsed
-
 def load_clean_data(uploaded_file, is_qaime=False):
     if uploaded_file is None:
         return None
     try:
         if uploaded_file.name.endswith('.csv'):
-            df_raw = pd.read_csv(uploaded_file, header=None)
+            df = pd.read_csv(uploaded_file)
         else:
-            df_raw = pd.read_excel(uploaded_file, header=None)
+            df = pd.read_excel(uploaded_file)
             
-        header_row = None
-        for i, row in df_raw.iterrows():
-            row_vals = [str(val).strip().lower() for val in row.values if pd.notna(val)]
-            row_str = " ".join(row_vals)
-            
-            if is_qaime:
-                if ("tarix" in row_str or "çıxarış" in row_str) and ("məbləğ" in row_str or "status" in row_str or "alıcı" in row_str or "adı" in row_str):
-                    header_row = i
-                    break
-            else:
-                if any(k in row_str for k in ["bank tərəfindən", "çıxarış", "silinmə", "daxil olma", "tarix", "kontragent"]):
-                    header_row = i
+        # Əgər ilk sətirlər boşdursa və ya Unnameddirsə, ilk tam sətri header edirik
+        if any("Unnamed" in str(col) for col in df.columns[:2]):
+            for i in range(min(10, len(df))):
+                row_vals = [str(v).lower() for v in df.iloc[i].values if pd.notna(v)]
+                row_str = " ".join(row_vals)
+                if ("tarix" in row_str or "çıxarış" in row_str or "kontragent" in row_str or "adı" in row_str):
+                    df.columns = df.iloc[i].astype(str).str.strip()
+                    df = df.iloc[i+1:].reset_index(drop=True)
                     break
                     
-        if header_row is None:
-            header_row = 0
-
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, skiprows=header_row)
-        else:
-            df = pd.read_excel(uploaded_file, skiprows=header_row)
-            
         df.columns = [str(c).strip() for c in df.columns]
         return df
     except Exception as e:
@@ -149,57 +130,54 @@ if df_qaime is not None or df_odenis is not None:
     if st.button("🚀 Avtomatik Üzləşmə Aktı Yarat"):
         combined_rows = []
         target_raw = str(secilmis_musteri).strip()
-        target_norm = normalize_text(secilmis_musteri)
-        core_keywords = get_core_keywords(secilmis_musteri)
+        target_clean = get_clean_company_name(secilmis_musteri)
         
-        # 1. Qaimələr (Debet) - DƏQİQ SEÇİM
+        # 1. Qaimələr (Debet)
         if df_qaime is not None and musteri_q and tarix_q:
-            q_df = df_qaime.copy()
-            q_df['parsed_date'] = parse_date_safely(q_df[tarix_q])
-            
-            for _, row in q_df.iterrows():
+            for _, row in df_qaime.iterrows():
                 val_raw = str(row[musteri_q]).strip()
-                val_norm = normalize_text(row[musteri_q])
+                val_clean = get_clean_company_name(row[musteri_q])
                 
-                # Qaimədə 100% tam uyğunluq
-                is_match = (val_raw == target_raw) or (val_norm == target_norm) or (target_norm in val_norm)
+                # Qaimədə genişlənmiş uyğunlaşdırma
+                is_match = (val_raw == target_raw) or (target_clean in val_clean) or (val_clean in target_clean)
                 
-                if is_match and pd.notna(row['parsed_date']):
+                if is_match:
                     mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
-                    snd = str(row[sened_q]) if sened_q and pd.notna(row[sened_q]) else ""
+                    snd = str(row[sened_q]).strip() if sened_q and pd.notna(row[sened_q]) else ""
+                    raw_date = row[tarix_q]
+                    dt_val = pd.to_datetime(raw_date, dayfirst=True, errors='coerce')
+                    
                     combined_rows.append({
-                        "Tarix": row['parsed_date'],
+                        "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
+                        "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
                         "Növ": "Qaimə",
                         "Sənəd №": snd,
                         "Debet": mblg,
                         "Kredit": 0.0
                     })
         
-        # 2. Ödənişlər (Kredit) - SIRA VƏ DƏQİQ KEYWORD AXTARIŞI
+        # 2. Ödənişlər (Kredit)
         if df_odenis is not None and musteri_o and tarix_o:
-            o_df = df_odenis.copy()
-            o_df['parsed_date'] = parse_date_safely(o_df[tarix_o])
-            
-            for _, row in o_df.iterrows():
-                val_m = normalize_text(row[musteri_o])
-                val_s = normalize_text(row[sened_o]) if sened_o and sened_o in row else ""
+            for _, row in df_odenis.iterrows():
+                val_m = get_clean_company_name(row[musteri_o])
+                val_s = get_clean_company_name(row[sened_o]) if sened_o and sened_o in row else ""
+                val_combined = f"{val_m} {val_s}"
                 
                 is_match = False
-                # Əsas firma adı ilə dəqiq eyniləşdirmə
-                if target_norm in val_m or target_norm in val_s:
+                if target_clean and (target_clean in val_combined):
                     is_match = True
-                elif core_keywords:
-                    # Bütün əsas açar sözlərin həmin ödənişdə olması şərti
-                    if all(kw in val_m or kw in val_s for kw in core_keywords):
-                        is_match = True
                 
-                if is_match and pd.notna(row['parsed_date']):
+                if is_match:
                     mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
                     snd = str(row[sened_o]) if sened_o and pd.notna(row[sened_o]) else "Ödəniş"
+                    raw_date = row[tarix_o]
+                    dt_val = pd.to_datetime(raw_date, dayfirst=True, errors='coerce')
+                    
                     combined_rows.append({
-                        "Tarix": row['parsed_date'],
+                        "Tarix": dt_val if pd.notna(dt_val) else pd.to_datetime("2026-01-01"),
+                        "Tarix_Str": str(raw_date)[:10] if pd.notna(raw_date) else "-",
                         "Növ": "Ödəniş",
-                        "Sənəd №": snd[:30],
+                        "Sənəd №": snd[:35],
                         "Debet": 0.0,
                         "Kredit": mblg
                     })
@@ -229,9 +207,10 @@ if df_qaime is not None or df_odenis is not None:
             for _, row in dovr_df.iterrows():
                 debet = row["Debet"]
                 kredit = row["Kredit"]
+                t_display = row["Tarix"].strftime("%d.%m.%Y") if pd.notna(row["Tarix"]) else row["Tarix_Str"]
                 
                 akt_rows.append({
-                    "Tarix": row["Tarix"].strftime("%d.%m.%Y"),
+                    "Tarix": t_display,
                     "Əməliyyat / Sənəd №": f"{row['Növ']} № {row['Sənəd №']}",
                     "Debet (Borc)": f"{debet:,.2f}" if debet > 0 else "-",
                     "Kredit (Alacaq)": f"{kredit:,.2f}" if kredit > 0 else "-"
