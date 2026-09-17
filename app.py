@@ -102,16 +102,22 @@ if df_qaime is not None or df_odenis is not None:
     musteri_q = st.sidebar.selectbox("Qaimə Müştəri Adı Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["adı", "müşterı", "alıcı"])) if cols_qaime else 0, key="m_q") if cols_qaime else None
     mebleg_q = st.sidebar.selectbox("Qaimə Məbləğ Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["yekun", "məbləğ"])) if cols_qaime else 0, key="mb_q") if cols_qaime else None
     sened_q = st.sidebar.selectbox("Qaimə № Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["nömr", "№"])) if cols_qaime else 0, key="s_q") if cols_qaime else None
-    nov_q = st.sidebar.selectbox("Qaimə Növü Sütunu (İstəyə bağlı)", ["Seçilməyib"] + cols_qaime, index=0, key="n_q") if cols_qaime else "Seçilməyib"
+    nov_col_q = st.sidebar.selectbox("Qaimə Növü Sütunu", ["Seçilməyib"] + cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["növ", "tipp", "növlər"])) + 1 if cols_qaime and find_default_col(cols_qaime, ["növ", "tipp", "növlər"]) else 0, key="n_col_q") if cols_qaime else "Seçilməyib"
 
-    # 2. Ödəniş Sütunları (Həm Silinmə, Həm Daxilolma)
+    # Növ Sütunu seçildikdə dinamik süzgəc siyahısı yaratmaq
+    secilmis_qaim_novleri = ["Bütün növlər"]
+    if df_qaime is not None and nov_col_q != "Seçilməyib" and nov_col_q in df_qaime.columns:
+        raw_types = df_qaime[nov_col_q].dropna().astype(str).str.strip().unique().tolist()
+        unique_types = sorted([t for t in raw_types if t and t.lower() not in ["none", "nan"]])
+        if unique_types:
+            secilmis_qaim_novleri = st.sidebar.multiselect("Qaimə Növünə görə süzgəc", options=["Bütün növlər"] + unique_types, default=["Bütün növlər"], key="ms_q_nov")
+
+    # 2. Ödəniş Sütunları
     st.sidebar.markdown("**Ödəniş Faylı Sütunları:**")
     tarix_o = st.sidebar.selectbox("Ödəniş Tarix Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["keçirilib", "tarix"])) if cols_odenis else 0, key="t_o") if cols_odenis else None
     musteri_o = st.sidebar.selectbox("Ödəniş Müştəri Adı Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["kontragent", "ödəyən"])) if cols_odenis else 0, key="m_o") if cols_odenis else None
-    
     silinme_o = st.sidebar.selectbox("Silinmə (Müştəri Ödənişi) Sütunu", ["Seçilməyib"] + cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["silinmə"])) + 1 if cols_odenis and find_default_col(cols_odenis, ["silinmə"]) else 0, key="sl_o") if cols_odenis else "Seçilməyib"
     daxilolma_o = st.sidebar.selectbox("Daxilolma (Geri qaytarılma) Sütunu", ["Seçilməyib"] + cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["daxil"])) + 1 if cols_odenis and find_default_col(cols_odenis, ["daxil"]) else 0, key="dx_o") if cols_odenis else "Seçilməyib"
-    
     sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, index=cols_odenis.index(find_default_col(cols_odenis, ["təyinat", "açıqlama"])) if cols_odenis else 0, key="s_o") if cols_odenis else None
 
     # Müştəri siyahısı
@@ -149,12 +155,14 @@ if df_qaime is not None or df_odenis is not None:
                 val_core = get_core_name(row[musteri_q])
                 
                 if (val_raw == target_raw) or (target_core == val_core):
+                    # Qaimə növü süzgəci (Süzgəc seçilibsə tətbiq olunur)
+                    q_nov_val = str(row[nov_col_q]).strip() if nov_col_q != "Seçilməyib" and nov_col_q in row and pd.notna(row[nov_col_q]) else ""
+                    if "Bütün növlər" not in secilmis_qaim_novleri and q_nov_val not in secilmis_qaim_novleri:
+                        continue # Seçilmiş qaimə növlərinə uyğun gəlmirsə ötür
+                        
                     mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
                     snd = str(row[sened_q]).strip() if sened_q and pd.notna(row[sened_q]) else ""
-                    
-                    q_type_str = ""
-                    if nov_q != "Seçilməyib" and nov_q in row and pd.notna(row[nov_q]):
-                        q_type_str = f" ({str(row[nov_q]).strip()})"
+                    q_type_str = f" ({q_nov_val})" if q_nov_val else ""
                         
                     raw_date = row[tarix_q]
                     dt_val = pd.to_datetime(raw_date, dayfirst=True, errors='coerce')
@@ -204,7 +212,7 @@ if df_qaime is not None or df_odenis is not None:
                         })
                 
         if not combined_rows:
-            st.warning("Seçilmiş müştəri üzrə heç bir əməliyyat tapılmadı.")
+            st.warning("Seçilmiş müştəri və ya filtrlər üzrə heç bir əməliyyat tapılmadı.")
         else:
             full_df = pd.DataFrame(combined_rows).sort_values(by="Tarix")
             
