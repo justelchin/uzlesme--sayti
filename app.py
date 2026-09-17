@@ -26,6 +26,13 @@ def normalize_text(text):
         text = text.replace(k, v)
     return re.sub(r'\s+', ' ', text).strip()
 
+def get_core_keywords(text):
+    """Gərəksiz ümumi sözləri çıxarıb yalnız əsas firma adını saxlayır"""
+    norm = normalize_text(text)
+    stop_words = {'MƏHDUD', 'MƏSULİYYƏTLİ', 'CƏMİYYƏTİ', 'MMC', 'LLC', 'AZERBAIJAN', 'BAKU', 'FIRMASI', 'SIRKETI'}
+    words = [w for w in norm.split() if len(w) >= 3 and w not in stop_words]
+    return words
+
 def clean_number(val):
     if pd.isna(val):
         return 0.0
@@ -141,17 +148,21 @@ if df_qaime is not None or df_odenis is not None:
         
     if st.button("🚀 Avtomatik Üzləşmə Aktı Yarat"):
         combined_rows = []
+        target_raw = str(secilmis_musteri).strip()
         target_norm = normalize_text(secilmis_musteri)
-        keywords = [w for w in target_norm.split() if len(w) >= 3]
+        core_keywords = get_core_keywords(secilmis_musteri)
         
-        # Qaimələr (Debet)
+        # 1. Qaimələr (Debet) - DƏQİQ SEÇİM
         if df_qaime is not None and musteri_q and tarix_q:
             q_df = df_qaime.copy()
             q_df['parsed_date'] = parse_date_safely(q_df[tarix_q])
             
             for _, row in q_df.iterrows():
-                val_m = normalize_text(row[musteri_q])
-                is_match = (val_m == target_norm) or (target_norm in val_m) or (val_m in target_norm and len(val_m) > 3) or (keywords and all(kw in val_m for kw in keywords))
+                val_raw = str(row[musteri_q]).strip()
+                val_norm = normalize_text(row[musteri_q])
+                
+                # Qaimədə 100% tam uyğunluq
+                is_match = (val_raw == target_raw) or (val_norm == target_norm) or (target_norm in val_norm)
                 
                 if is_match and pd.notna(row['parsed_date']):
                     mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
@@ -164,7 +175,7 @@ if df_qaime is not None or df_odenis is not None:
                         "Kredit": 0.0
                     })
         
-        # Ödənişlər (Kredit)
+        # 2. Ödənişlər (Kredit) - SIRA VƏ DƏQİQ KEYWORD AXTARIŞI
         if df_odenis is not None and musteri_o and tarix_o:
             o_df = df_odenis.copy()
             o_df['parsed_date'] = parse_date_safely(o_df[tarix_o])
@@ -174,10 +185,13 @@ if df_qaime is not None or df_odenis is not None:
                 val_s = normalize_text(row[sened_o]) if sened_o and sened_o in row else ""
                 
                 is_match = False
+                # Əsas firma adı ilə dəqiq eyniləşdirmə
                 if target_norm in val_m or target_norm in val_s:
                     is_match = True
-                elif keywords and any(kw in val_m or kw in val_s for kw in keywords):
-                    is_match = True
+                elif core_keywords:
+                    # Bütün əsas açar sözlərin həmin ödənişdə olması şərti
+                    if all(kw in val_m or kw in val_s for kw in core_keywords):
+                        is_match = True
                 
                 if is_match and pd.notna(row['parsed_date']):
                     mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
