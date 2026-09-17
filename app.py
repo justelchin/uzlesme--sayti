@@ -7,7 +7,6 @@ st.set_page_config(page_title="Üzləşmə Aktı Portalı", layout="wide")
 st.title("📊 Debitor və Kreditor Üzləşmə Portalı")
 st.write("Qaimə və Ödəniş fayllarını yükləyin, sütunları uyğunlaşdırın və avtomatik üzləşmə aktı hazırlayın.")
 
-# Sabit Şirkət Adımız
 BIZIM_SIRKET = '"ŞƏKİ ŞƏRAB" MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ'
 
 st.sidebar.header("📁 Faylları Yükləyin")
@@ -18,7 +17,6 @@ def normalize_text(text):
     if pd.isna(text):
         return ""
     text = str(text).upper()
-    # Azerbaycan hərf fərqliliklərini eyniləşdirmək
     replacements = {
         'İ': 'I', 'Ə': 'E', 'Ğ': 'G', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U',
         '"': '', '”': '', '“': '', 'MƏHDUD MƏSULİYYƏTLİ CƏMİYYƏTİ': '', 
@@ -41,10 +39,15 @@ def clean_number(val):
     except:
         return 0.0
 
+def parse_date_safely(series):
+    parsed = pd.to_datetime(series, dayfirst=True, errors='coerce')
+    if parsed.isna().sum() > len(series) * 0.5:
+        parsed = pd.to_datetime(series, errors='coerce')
+    return parsed
+
 def load_clean_data(uploaded_file, is_qaime=False):
     if uploaded_file is None:
         return None
-    
     try:
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
@@ -113,7 +116,7 @@ if df_qaime is not None or df_odenis is not None:
     mebleg_o = st.sidebar.selectbox("Ödəniş Məbləğ Sütunu", cols_odenis, key="mb_o") if cols_odenis else None
     sened_o = st.sidebar.selectbox("Ödəniş Sənəd/Açıqlama Sütunu", cols_odenis, key="s_o") if cols_odenis else None
 
-    # Müştəri siyahısını filtrləmək
+    # Müştəri siyahısı
     musteriler_list = []
     if df_qaime is not None and musteri_q in df_qaime.columns:
         raw_m = df_qaime[musteri_q].dropna().astype(str).unique().tolist()
@@ -139,49 +142,48 @@ if df_qaime is not None or df_odenis is not None:
     if st.button("🚀 Avtomatik Üzləşmə Aktı Yarat"):
         combined_rows = []
         target_norm = normalize_text(secilmis_musteri)
-        
-        # Açar sözləri çıxarmaq (Məsələn BARISTICA sözünü kök olaraq axtarmaq üçün)
-        keywords = [w for w in target_norm.split() if len(w) > 2]
+        keywords = [w for w in target_norm.split() if len(w) >= 3]
         
         # Qaimələr (Debet)
         if df_qaime is not None and musteri_q and tarix_q:
-            q_df = df_qaime[df_qaime[musteri_q].astype(str) == secilmis_musteri].copy()
-            q_df[tarix_q] = pd.to_datetime(q_df[tarix_q], errors='coerce')
-            q_df = q_df.dropna(subset=[tarix_q])
+            q_df = df_qaime.copy()
+            q_df['parsed_date'] = parse_date_safely(q_df[tarix_q])
             
             for _, row in q_df.iterrows():
-                mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
-                snd = str(row[sened_q]) if sened_q and pd.notna(row[sened_q]) else ""
-                combined_rows.append({
-                    "Tarix": row[tarix_q],
-                    "Növ": "Qaimə",
-                    "Sənəd №": snd,
-                    "Debet": mblg,
-                    "Kredit": 0.0
-                })
+                val_m = normalize_text(row[musteri_q])
+                is_match = (val_m == target_norm) or (target_norm in val_m) or (val_m in target_norm and len(val_m) > 3) or (keywords and all(kw in val_m for kw in keywords))
+                
+                if is_match and pd.notna(row['parsed_date']):
+                    mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
+                    snd = str(row[sened_q]) if sened_q and pd.notna(row[sened_q]) else ""
+                    combined_rows.append({
+                        "Tarix": row['parsed_date'],
+                        "Növ": "Qaimə",
+                        "Sənəd №": snd,
+                        "Debet": mblg,
+                        "Kredit": 0.0
+                    })
         
         # Ödənişlər (Kredit)
         if df_odenis is not None and musteri_o and tarix_o:
             o_df = df_odenis.copy()
-            o_df[tarix_o] = pd.to_datetime(o_df[tarix_o], errors='coerce')
-            o_df = o_df.dropna(subset=[tarix_o])
+            o_df['parsed_date'] = parse_date_safely(o_df[tarix_o])
             
             for _, row in o_df.iterrows():
                 val_m = normalize_text(row[musteri_o])
                 val_s = normalize_text(row[sened_o]) if sened_o and sened_o in row else ""
                 
-                # Ağıllı Eyniləşdirmə: Tam ad, kök söz və ya açıqlama daxilində axtarış
                 is_match = False
                 if target_norm in val_m or target_norm in val_s:
                     is_match = True
-                elif any(kw in val_m or kw in val_s for kw in keywords):
+                elif keywords and any(kw in val_m or kw in val_s for kw in keywords):
                     is_match = True
                 
-                if is_match:
+                if is_match and pd.notna(row['parsed_date']):
                     mblg = clean_number(row[mebleg_o]) if mebleg_o else 0.0
                     snd = str(row[sened_o]) if sened_o and pd.notna(row[sened_o]) else "Ödəniş"
                     combined_rows.append({
-                        "Tarix": row[tarix_o],
+                        "Tarix": row['parsed_date'],
                         "Növ": "Ödəniş",
                         "Sənəd №": snd[:30],
                         "Debet": 0.0,
