@@ -104,7 +104,6 @@ if df_qaime is not None or df_odenis is not None:
     sened_q = st.sidebar.selectbox("Qaimə № Sütunu", cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["nömr", "№"])) if cols_qaime else 0, key="s_q") if cols_qaime else None
     nov_col_q = st.sidebar.selectbox("Qaimə Növü Sütunu", ["Seçilməyib"] + cols_qaime, index=cols_qaime.index(find_default_col(cols_qaime, ["növ", "tipp", "növlər"])) + 1 if cols_qaime and find_default_col(cols_qaime, ["növ", "tipp", "növlər"]) else 0, key="n_col_q") if cols_qaime else "Seçilməyib"
 
-    # Növ Sütunu seçildikdə dinamik süzgəc siyahısı yaratmaq
     secilmis_qaim_novleri = ["Bütün növlər"]
     if df_qaime is not None and nov_col_q != "Seçilməyib" and nov_col_q in df_qaime.columns:
         raw_types = df_qaime[nov_col_q].dropna().astype(str).str.strip().unique().tolist()
@@ -155,10 +154,9 @@ if df_qaime is not None or df_odenis is not None:
                 val_core = get_core_name(row[musteri_q])
                 
                 if (val_raw == target_raw) or (target_core == val_core):
-                    # Qaimə növü süzgəci (Süzgəc seçilibsə tətbiq olunur)
                     q_nov_val = str(row[nov_col_q]).strip() if nov_col_q != "Seçilməyib" and nov_col_q in row and pd.notna(row[nov_col_q]) else ""
                     if "Bütün növlər" not in secilmis_qaim_novleri and q_nov_val not in secilmis_qaim_novleri:
-                        continue # Seçilmiş qaimə növlərinə uyğun gəlmirsə ötür
+                        continue
                         
                     mblg = clean_number(row[mebleg_q]) if mebleg_q else 0.0
                     snd = str(row[sened_q]).strip() if sened_q and pd.notna(row[sened_q]) else ""
@@ -187,7 +185,7 @@ if df_qaime is not None or df_odenis is not None:
                     raw_date = row[tarix_o]
                     dt_val = pd.to_datetime(raw_date, dayfirst=True, errors='coerce')
                     
-                    # Silinmə (Ödəniş - Kredit)
+                    # Silinmə (Müştəri Ödənişi - Kredit)
                     mblg_silinme = clean_number(row[silinme_o]) if silinme_o != "Seçilməyib" and silinme_o in row else 0.0
                     if mblg_silinme > 0:
                         combined_rows.append({
@@ -199,7 +197,7 @@ if df_qaime is not None or df_odenis is not None:
                             "Kredit": mblg_silinme
                         })
                         
-                    # Daxilolma (Geri Qaytarılma - Debet)
+                    # Daxilolma (Geri Qaytarılma / Mədaxil - Debet)
                     mblg_daxil = clean_number(row[daxilolma_o]) if daxilolma_o != "Seçilməyib" and daxilolma_o in row else 0.0
                     if mblg_daxil > 0:
                         combined_rows.append({
@@ -212,7 +210,7 @@ if df_qaime is not None or df_odenis is not None:
                         })
                 
         if not combined_rows:
-            st.warning("Seçilmiş müştəri və ya filtrlər üzrə heç bir əməliyyat tapılmadı.")
+            st.warning("Seçilmiş müştəri üzrə heç bir əməliyyat tapılmadı.")
         else:
             full_df = pd.DataFrame(combined_rows).sort_values(by="Tarix")
             
@@ -224,7 +222,7 @@ if df_qaime is not None or df_odenis is not None:
             
             dovr_df = full_df[(full_df["Tarix"] >= bas_tarix_dt) & (full_df["Tarix"] <= bit_tarix_dt)]
             
-            # 1. İlkin Qalıq Sətri
+            # 1. İlkin Qalıq Sətri (Debitor -> Debet, Kreditor -> Kredit)
             akt_rows = [{
                 "Tarix": "-",
                 "Əməliyyat / Sənəd №": "Dövrə qədər olan ilkin qalıq",
@@ -245,7 +243,7 @@ if df_qaime is not None or df_odenis is not None:
                     "Kredit (Alacaq)": f"{kredit:,.2f}" if kredit > 0 else "-"
                 })
             
-            # 3. Yekun Son Qalıq Sətri
+            # 3. Yekun Son Qalıq Sətri (Debitor Borcu -> Debet, Kreditor Borcu -> Kredit)
             dovr_debet = dovr_df["Debet"].sum()
             dovr_kredit = dovr_df["Kredit"].sum()
             son_qaliq = ilkin_qaliq + dovr_debet - dovr_kredit
